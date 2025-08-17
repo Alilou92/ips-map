@@ -1,64 +1,56 @@
-// js/data.js
-import { BASE, DS_GEO, DS_IPS, EXPLORE_BASE } from "./config.js";
+// js/data.js  (v=10)
+import { BASE, DS_GEO, DS_IPS } from "./config.js";
 import { extractEstablishment, stripDiacritics } from "./util.js";
 
-/* -------------------- Autour d'une adresse (inchangé) -------------------- */
+/* -------------------- Autour d'une adresse -------------------- */
 export async function fetchEstablishmentsAround(lat, lon, radiusMeters, sectorFilter, typesWanted){
   const params = new URLSearchParams({
     dataset: DS_GEO,
     rows: "600",
-    geofilter_distance: `${lat},${lon},${radiusMeters}`
+    // ✅ bon paramètre Opendatasoft :
+    "geofilter.distance": `${lat},${lon},${radiusMeters}`
   });
   params.append("facet","secteur");
   params.append("facet","libelles_nature");
   params.append("facet","nature_uai_libe");
 
   const r = await fetch(`${BASE}?${params}`);
-  if(!r.ok) throw new Error("Données indisponibles");
-  let feats = (await r.json()).records?.map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai) || [];
+  if(!r.ok) throw new Error("Données indisponibles (annuaire)");
+  const js = await r.json();
+  let feats = (js.records||[]).map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai) || [];
   if (sectorFilter!=="all") feats = feats.filter(x=>x.secteur===sectorFilter);
   return feats.filter(x=>typesWanted.has(x.type));
 }
 
-/* -------------------- Utilitaires (annuaire géoloc par département) -------------------- */
+/* -------------------- Utilitaires annuaire (inchangés) -------------------- */
 export async function fetchEstablishmentsInDepartement(depCode){
   depCode = String(depCode).toUpperCase();
-
   const tryRefine = async(field)=>{
     const p = new URLSearchParams({ dataset:DS_GEO, rows:"5000" });
     p.append("facet","secteur"); p.append("facet","libelles_nature"); p.append("facet","nature_uai_libe");
     p.append(`refine.${field}`, depCode);
     const r = await fetch(`${BASE}?${p}`); return r.ok ? r.json() : {records:[]};
   };
-
   let js = await tryRefine('code_departement');
   if (!js.records?.length) js = await tryRefine('code_du_departement');
-
   if (!js.records?.length){
-    const p = new URLSearchParams({
-      dataset:DS_GEO,
-      rows:"5000",
-      q:`code_departement:${depCode} OR code_du_departement:${depCode}`
-    });
+    const p = new URLSearchParams({ dataset:DS_GEO, rows:"5000", q:`code_departement:${depCode} OR code_du_departement:${depCode}` });
     p.append("facet","secteur"); p.append("facet","libelles_nature"); p.append("facet","nature_uai_libe");
     const r = await fetch(`${BASE}?${p}`); js = r.ok ? await r.json() : {records:[]};
   }
-
-  return (js.records||[])
-    .map(rec=>extractEstablishment(rec.fields))
-    .filter(x=>x.lat&&x.lon&&x.uai&&x.type);
+  return (js.records||[]).map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai&&x.type);
 }
 
 /* -------------------- Index IPS (autour d'une adresse) -------------------- */
-/* On garde Explore v2.1 ici car on filtre par liste d’UAI (plus pratique). */
 export async function buildIPSIndex(uaisByType){
   const result = new Map();
 
   async function fetchIpsChunk(dataset, uaisChunk){
+    // On garde Explore pour requêter par liste d'UAI
+    const EXPLORE_BASE = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/";
     const list = uaisChunk.map(u => `"${u}"`).join(",");
     let url = `${EXPLORE_BASE}${dataset}/records?select=uai,ips,indice_position_sociale,indice&where=uai IN (${list})&limit=1000`;
     let r = await fetch(url); let js = r.ok ? await r.json() : { results: [] }; let rows = js.results || [];
-
     if (!rows.length) {
       url = `${EXPLORE_BASE}${dataset}/records?select=code_uai,ips,indice_position_sociale,indice&where=code_uai IN (${list})&limit=1000`;
       r = await fetch(url); js = r.ok ? await r.json() : { results: [] };
@@ -83,7 +75,7 @@ export async function buildIPSIndex(uaisByType){
   return result;
 }
 
-/* -------------------- Rentrée (pour info d’affichage uniquement) -------------------- */
+/* -------------------- Rentrée (info) -------------------- */
 export async function getLatestRentree(dataset){
   try{
     const p = new URLSearchParams({ dataset, rows:"0", facet:"rentree_scolaire" });
@@ -94,7 +86,7 @@ export async function getLatestRentree(dataset){
   } catch { return null; }
 }
 
-/* -------------------- Résolution d’un département (texte -> code) -------------------- */
+/* -------------------- Résolution département -------------------- */
 export async function resolveDepartement(input){
   const s = input.trim();
   const isCode = /^(2A|2B|\d{2,3})$/i.test(s);
@@ -113,7 +105,6 @@ export async function resolveDepartement(input){
       return { code, label: f.departement || f.nom_departement || code };
     } catch { return { code, label: code }; }
   }
-
   const target = stripDiacritics(s).toUpperCase().replace(/\b(DEPARTEMENT|DPT|DEPT)\b/g,"").trim();
   for (const nameField of ["departement","nom_departement"]){
     try{
@@ -134,9 +125,7 @@ export async function resolveDepartement(input){
   return null;
 }
 
-/* -------------------- Top 10 DIRECT par département (robuste via API search v1.0) -------------------- */
-/* Gère 94/094, code_du_departement/code_departement, filtre secteur côté client,
-   détecte la dernière rentrée présente, puis tri/Top 10 sur IPS. */
+/* -------------------- Top 10 département (via API search v1.0) -------------------- */
 function padDeptCodes(inp){
   const c = String(inp).toUpperCase().trim();
   const c2 = c;                                // "94", "2A", "971"...
@@ -162,14 +151,12 @@ export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
       const js = await r.json();
       return (js.records||[]).map(rec => rec.fields || {});
     }
-    // essaie code_du_departement puis code_departement, 094 puis 94
     let rows = await tryRef("code_du_departement", code3);
     if (!rows.length) rows = await tryRef("code_du_departement", code2);
     if (!rows.length) rows = await tryRef("code_departement",  code3);
     if (!rows.length) rows = await tryRef("code_departement",  code2);
 
     if (!rows.length){
-      // filet de sécurité : recherche plein texte
       const p = new URLSearchParams({
         dataset, rows:"5000",
         q: `code_du_departement:${code3} OR code_du_departement:${code2} OR code_departement:${code3} OR code_departement:${code2}`
@@ -181,7 +168,6 @@ export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
       }
     }
 
-    // normalisation des champs utiles
     return rows.map(f => {
       const ips = Number(f.ips ?? f.indice_position_sociale ?? f.indice);
       return {
@@ -202,7 +188,6 @@ export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
     const dataset = DS_IPS[t];
     let rows = await fetchAll(dataset);
 
-    // filtre secteur côté client (plus tolérant aux libellés)
     if (sectorFilter !== "all"){
       rows = rows.filter(r => {
         const s = normSect(r.secteur);
@@ -210,7 +195,6 @@ export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
       });
     }
 
-    // détecte la dernière rentrée présente (si dispo), puis Top 10 par IPS
     const years = rows.map(r => r.rentree).filter(v => v != null);
     const latest = years.length ? Math.max(...years) : null;
 
@@ -225,7 +209,7 @@ export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
   return out;
 }
 
-/* -------------------- Géoloc par UAI (pour poser des marqueurs) -------------------- */
+/* -------------------- Géoloc par UAI -------------------- */
 export async function fetchGeoByUai(uai){
   const p = new URLSearchParams({ dataset: DS_GEO, rows: "1" });
   p.append("refine.numero_uai", uai);
@@ -234,7 +218,6 @@ export async function fetchGeoByUai(uai){
   const js = await r.json();
   const f = js.records?.[0]?.fields;
   if (!f) return null;
-
   const w = f.wgs84 || f.geo_point_2d || f.geopoint || f.geolocalisation;
   if (Array.isArray(w)) return { lat: Number(w[0]), lon: Number(w[1]) };
   if (w && typeof w === "object") return { lat: Number(w.lat), lon: Number(w.lon) };
