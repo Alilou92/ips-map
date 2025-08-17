@@ -4,40 +4,61 @@ import { extractEstablishment, stripDiacritics } from "./util.js";
 
 /* -------------------- Autour d'une adresse (inchangé) -------------------- */
 export async function fetchEstablishmentsAround(lat, lon, radiusMeters, sectorFilter, typesWanted){
-  const params = new URLSearchParams({ dataset: DS_GEO, rows:"600", geofilter_distance: `${lat},${lon},${radiusMeters}` });
-  params.append("facet","secteur"); params.append("facet","libelles_nature"); params.append("facet","nature_uai_libe");
-  const r = await fetch(`${BASE}?${params}`); if(!r.ok) throw new Error("Données indisponibles");
+  const params = new URLSearchParams({
+    dataset: DS_GEO,
+    rows: "600",
+    geofilter_distance: `${lat},${lon},${radiusMeters}`
+  });
+  params.append("facet","secteur");
+  params.append("facet","libelles_nature");
+  params.append("facet","nature_uai_libe");
+
+  const r = await fetch(`${BASE}?${params}`);
+  if(!r.ok) throw new Error("Données indisponibles");
   let feats = (await r.json()).records?.map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai) || [];
   if (sectorFilter!=="all") feats = feats.filter(x=>x.secteur===sectorFilter);
   return feats.filter(x=>typesWanted.has(x.type));
 }
 
-/* -------------------- Utilitaires existants (géoloc / établissement) -------------------- */
+/* -------------------- Utilitaires (annuaire géoloc par département) -------------------- */
 export async function fetchEstablishmentsInDepartement(depCode){
   depCode = String(depCode).toUpperCase();
+
   const tryRefine = async(field)=>{
     const p = new URLSearchParams({ dataset:DS_GEO, rows:"5000" });
     p.append("facet","secteur"); p.append("facet","libelles_nature"); p.append("facet","nature_uai_libe");
     p.append(`refine.${field}`, depCode);
     const r = await fetch(`${BASE}?${p}`); return r.ok ? r.json() : {records:[]};
   };
+
   let js = await tryRefine('code_departement');
   if (!js.records?.length) js = await tryRefine('code_du_departement');
+
   if (!js.records?.length){
-    const p = new URLSearchParams({ dataset:DS_GEO, rows:"5000", q:`code_departement:${depCode} OR code_du_departement:${depCode}` });
+    const p = new URLSearchParams({
+      dataset:DS_GEO,
+      rows:"5000",
+      q:`code_departement:${depCode} OR code_du_departement:${depCode}`
+    });
     p.append("facet","secteur"); p.append("facet","libelles_nature"); p.append("facet","nature_uai_libe");
     const r = await fetch(`${BASE}?${p}`); js = r.ok ? await r.json() : {records:[]};
   }
-  return (js.records||[]).map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai&&x.type);
+
+  return (js.records||[])
+    .map(rec=>extractEstablishment(rec.fields))
+    .filter(x=>x.lat&&x.lon&&x.uai&&x.type);
 }
 
 /* -------------------- Index IPS (autour d'une adresse) -------------------- */
+/* On garde Explore v2.1 ici car on filtre par liste d’UAI (plus pratique). */
 export async function buildIPSIndex(uaisByType){
   const result = new Map();
+
   async function fetchIpsChunk(dataset, uaisChunk){
     const list = uaisChunk.map(u => `"${u}"`).join(",");
     let url = `${EXPLORE_BASE}${dataset}/records?select=uai,ips,indice_position_sociale,indice&where=uai IN (${list})&limit=1000`;
     let r = await fetch(url); let js = r.ok ? await r.json() : { results: [] }; let rows = js.results || [];
+
     if (!rows.length) {
       url = `${EXPLORE_BASE}${dataset}/records?select=code_uai,ips,indice_position_sociale,indice&where=code_uai IN (${list})&limit=1000`;
       r = await fetch(url); js = r.ok ? await r.json() : { results: [] };
@@ -47,6 +68,7 @@ export async function buildIPSIndex(uaisByType){
     }
     return rows;
   }
+
   for (const [k,dataset] of Object.entries(DS_IPS)){
     const set = uaisByType[k]; if (!set?.size) continue;
     const uais = Array.from(set); const chunk = 90;
@@ -61,7 +83,7 @@ export async function buildIPSIndex(uaisByType){
   return result;
 }
 
-/* -------------------- Rentrée (utilisé pour info d'affichage, pas pour filtrer) -------------------- */
+/* -------------------- Rentrée (pour info d’affichage uniquement) -------------------- */
 export async function getLatestRentree(dataset){
   try{
     const p = new URLSearchParams({ dataset, rows:"0", facet:"rentree_scolaire" });
@@ -72,7 +94,7 @@ export async function getLatestRentree(dataset){
   } catch { return null; }
 }
 
-/* -------------------- Résolution département (texte -> code) -------------------- */
+/* -------------------- Résolution d’un département (texte -> code) -------------------- */
 export async function resolveDepartement(input){
   const s = input.trim();
   const isCode = /^(2A|2B|\d{2,3})$/i.test(s);
@@ -91,6 +113,7 @@ export async function resolveDepartement(input){
       return { code, label: f.departement || f.nom_departement || code };
     } catch { return { code, label: code }; }
   }
+
   const target = stripDiacritics(s).toUpperCase().replace(/\b(DEPARTEMENT|DPT|DEPT)\b/g,"").trim();
   for (const nameField of ["departement","nom_departement"]){
     try{
@@ -111,13 +134,12 @@ export async function resolveDepartement(input){
   return null;
 }
 
-/* -------------------- Top 10 DIRECT par département (robuste) -------------------- */
+/* -------------------- Top 10 DIRECT par département (robuste via API search v1.0) -------------------- */
 /* Gère 94/094, code_du_departement/code_departement, filtre secteur côté client,
-   détecte la dernière rentrée présente, puis trie/Top 10 sur IPS. */
-
+   détecte la dernière rentrée présente, puis tri/Top 10 sur IPS. */
 function padDeptCodes(inp){
   const c = String(inp).toUpperCase().trim();
-  const c2 = c;                               // "94", "2A", "971"...
+  const c2 = c;                                // "94", "2A", "971"...
   const c3 = /^\d{2}$/.test(c2) ? "0"+c2 : c2; // "94" -> "094"
   return [c2, c3];
 }
@@ -212,6 +234,7 @@ export async function fetchGeoByUai(uai){
   const js = await r.json();
   const f = js.records?.[0]?.fields;
   if (!f) return null;
+
   const w = f.wgs84 || f.geo_point_2d || f.geopoint || f.geolocalisation;
   if (Array.isArray(w)) return { lat: Number(w[0]), lon: Number(w[1]) };
   if (w && typeof w === "object") return { lat: Number(w.lat), lon: Number(w.lon) };
