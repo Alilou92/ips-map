@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IPS Map – Application</title>
+  <link rel="stylesheet" href="./assets/style.css" />
+
+  <!-- Leaflet (CDN) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+</head>
+<body>
+  <div class="top">
+    <strong>IPS Map</strong>
+    <input id="addr" type="text" size="38" placeholder="Adresse OU département (ex. 94, 2A, Val-de-Marne)" />
+    <label>Rayon
+      <select id="radiusKm">
+        <option value="0.8">800 m</option>
+        <option value="1.0" selected>1 km</option>
+        <option value="1.5">1,5 km</option>
+        <option value="2.0">2 km</option>
+        <option value="3.0">3 km</option>
+      </select>
+    </label>
+    <label>Types
+      <select id="types" multiple size="3">
+        <option value="ecole" selected>École</option>
+        <option value="college" selected>Collège</option>
+        <option value="lycee" selected>Lycée</option>
+      </select>
+    </label>
+    <label>Secteur
+      <select id="secteur">
+        <option value="all" selected>Tous</option>
+        <option value="Public">Public</option>
+        <option value="Privé">Privé</option>
+      </select>
+    </label>
+    <button id="go">Chercher</button>
+    <span class="hint">Astuce : Ctrl/Cmd+clic pour (dé)sélection multiple</span>
+  </div>
+
+  <div id="err" class="banner" role="status" aria-live="polite"></div>
+
+  <div class="wrap">
+    <aside id="sidebar">
+      <div class="h">
+        <div class="title">Résultats</div>
+        <div class="small" id="count">—</div>
+      </div>
+      <div class="list" id="list"></div>
+      <div class="note">
+        <div>• Pastille grise = IPS non publié. Seuils indicatifs : &lt;90 défavorisé • 90–110 moyen • &gt;110 favorisé.</div>
+        <div>• Tape un <em>département</em> (ex. “94” ou “Val-de-Marne”) pour voir le Top 10.</div>
+      </div>
+      <div class="footer">Données : Ministère Éducation (UAI, IPS) • Carte : © OpenStreetMap — Leaflet.</div>
+    </aside>
+    <main id="map"></main>
+  </div>
+
+  <div class="legend" id="legend">
+    <div><strong>IPS</strong> (indicatif) :</div>
+    <div>• &lt; 90 → plus défavorisé</div>
+    <div>• 90–110 → moyen</div>
+    <div>• &gt; 110 → plus favorisé</div>
+    <div style="margin-top:6px">Gris = IPS non publié</div>
+  </div>
+
+  <!-- App entrypoint (modules) -->
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
