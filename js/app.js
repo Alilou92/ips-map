@@ -1,62 +1,64 @@
-// js/app.js
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js";
-import { geocode } from "./geocode.js";
+// js/app.js  (v=7)
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=7";
+import { geocode } from "./geocode.js?v=7";
 import {
   fetchEstablishmentsAround,
   buildIPSIndex,
   fetchTop10DeptDirect,
   fetchGeoByUai,
   resolveDepartement
-} from "./data.js";
-import { distanceMeters, isDeptCode } from "./util.js";
-import { renderList, setCount, showErr } from "./ui.js";
+} from "./data.js?v=7";
+import { distanceMeters, isDeptCode } from "./util.js?v=7";
+import { renderList, setCount, showErr } from "./ui.js?v=7";
 
 const { map, markersLayer } = initMap();
 let addrCircle = null;
 let addrLat = null, addrLon = null;
 
-/* ---------- NOUVEAU Top 10 par département (direct sur jeux IPS) ---------- */
+/* ---------- Top 10 par département (direct sur jeux IPS, auto-détection de la dernière rentrée) ---------- */
 async function runDeptRanking(q, sectorFilter, typesWanted) {
   const dep = await resolveDepartement(q);
   const depCode = dep?.code || q.trim();
+
+  // Interroge directement les datasets IPS (sans filtrer a priori par "rentrée"),
+  // détecte la dernière année présente, trie sur IPS et coupe Top 10.
   const { label, byType } = await fetchTop10DeptDirect(depCode, sectorFilter, typesWanted);
 
-  // UI : titre
+  // UI
   const count = document.getElementById('count');
   const list  = document.getElementById('list');
   list.innerHTML = "";
   count.textContent = `Top 10 — Département ${label || depCode} (${sectorFilter==="all"?"Tous secteurs":sectorFilter})`;
 
-  // nettoie la carte
+  // carte
   markersLayer.clearLayers();
 
-  // Pour chaque type demandé : liste + éventuels marqueurs
   const order = ["ecole","college","lycee"].filter(t => typesWanted.has(t));
   for (const t of order){
     const human = t==="ecole" ? "Écoles" : t==="college" ? "Collèges" : "Lycées";
-    const arr = byType[t];
+    const arr = byType[t] || [];
 
-    // bloc section
     const sec = document.createElement('div');
     sec.innerHTML = `<div class="sectionTitle">${human} — Top 10 <span class="pill small">${label || depCode}</span></div>`;
 
-    // géoloc (optionnelle) + rendu des lignes
     for (let i=0; i<arr.length; i++){
       const it = arr[i];
 
-      // essaie de trouver lat/lon pour afficher sur la carte
+      // essaie de récupérer des coordonnées pour la carte
       try {
-        const g = await fetchGeoByUai(it.uai);
-        if (g){ it.lat = g.lat; it.lon = g.lon; }
+        if (it.uai && (it.lat==null || it.lon==null)) {
+          const g = await fetchGeoByUai(it.uai);
+          if (g){ it.lat = g.lat; it.lon = g.lon; }
+        }
       } catch {}
 
       const row = document.createElement('div');
       row.className = "item";
       row.innerHTML = `
-        <div class="name">#${i+1} ${it.name}<span class="badge">${it.secteur}</span></div>
+        <div class="name">#${i+1} ${it.name}<span class="badge">${it.secteur || "—"}</span></div>
         <div class="meta">${human.slice(0,-1)} — ${it.commune || ''}</div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
-          <div class="ips">IPS : ${it.ips.toFixed(1)}</div>
+          <div class="ips">IPS : ${Number(it.ips).toFixed(1)}</div>
           <div class="dist">UAI : ${it.uai}</div>
         </div>`;
 
@@ -70,10 +72,9 @@ async function runDeptRanking(q, sectorFilter, typesWanted) {
     list.appendChild(sec);
   }
 
-  // ajuste la vue si on a au moins un marqueur
-  const allWithCoords = order.flatMap(t => byType[t]).filter(x => x.lat && x.lon);
+  const allWithCoords = order.flatMap(t => byType[t] || []).filter(x => x.lat && x.lon);
   if (allWithCoords.length) fitToMarkers(map, allWithCoords);
-  else showErr("Top 10 listé sans carte (coordonnées non disponibles pour certains établissements).");
+  else showErr("Top 10 listé (pas ou peu de coordonnées disponibles pour la carte).");
 }
 
 /* ---------- Recherche autour d'une adresse (inchangé) ---------- */
