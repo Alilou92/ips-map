@@ -12,7 +12,7 @@ export async function fetchEstablishmentsAround(lat, lon, radiusMeters, sectorFi
   return feats.filter(x=>typesWanted.has(x.type));
 }
 
-/* -------------------- Utilitaires existants -------------------- */
+/* -------------------- Utilitaires existants (géoloc / établissement) -------------------- */
 export async function fetchEstablishmentsInDepartement(depCode){
   depCode = String(depCode).toUpperCase();
   const tryRefine = async(field)=>{
@@ -31,6 +31,7 @@ export async function fetchEstablishmentsInDepartement(depCode){
   return (js.records||[]).map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai&&x.type);
 }
 
+/* -------------------- Index IPS (autour d'une adresse) -------------------- */
 export async function buildIPSIndex(uaisByType){
   const result = new Map();
   async function fetchIpsChunk(dataset, uaisChunk){
@@ -60,6 +61,7 @@ export async function buildIPSIndex(uaisByType){
   return result;
 }
 
+/* -------------------- Rentrée (utilisé pour info d'affichage, pas pour filtrer) -------------------- */
 export async function getLatestRentree(dataset){
   try{
     const p = new URLSearchParams({ dataset, rows:"0", facet:"rentree_scolaire" });
@@ -70,6 +72,7 @@ export async function getLatestRentree(dataset){
   } catch { return null; }
 }
 
+/* -------------------- Résolution département (texte -> code) -------------------- */
 export async function resolveDepartement(input){
   const s = input.trim();
   const isCode = /^(2A|2B|\d{2,3})$/i.test(s);
@@ -108,52 +111,99 @@ export async function resolveDepartement(input){
   return null;
 }
 
-/* -------------------- NOUVEAU : Top 10 DIRECT par département -------------------- */
-/* Corrige le souci 94 vs 094 + évite la jointure initiale. */
-function padDept3(dep){
-  const s = String(dep).toUpperCase().trim();
-  if (/^\d{2}$/.test(s)) return "0" + s;      // ex. "94" -> "094"
-  return s;                                    // "2A","2B","971" restent tels quels
+/* -------------------- Top 10 DIRECT par département (robuste) -------------------- */
+/* Gère 94/094, code_du_departement/code_departement, filtre secteur côté client,
+   détecte la dernière rentrée présente, puis trie/Top 10 sur IPS. */
+
+function padDeptCodes(inp){
+  const c = String(inp).toUpperCase().trim();
+  const c2 = c;                               // "94", "2A", "971"...
+  const c3 = /^\d{2}$/.test(c2) ? "0"+c2 : c2; // "94" -> "094"
+  return [c2, c3];
 }
+const toInt = v => { const n = parseInt(v,10); return Number.isFinite(n) ? n : null; };
+const normSect = s => {
+  s = (s||"").toLowerCase();
+  if (s.startsWith("pub")) return "Public";
+  if (s.startsWith("priv")) return "Privé";
+  return "—";
+};
 
 export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
-  const code2 = String(depInput).toUpperCase();
-  const code3 = padDept3(code2);
-  const sectorWhere =
-    sectorFilter === "Public" ? ` AND secteur = "Public"` :
-    sectorFilter === "Privé"  ? ` AND secteur LIKE "Priv%"` :
-    "";
+  const [code2, code3] = padDeptCodes(depInput);
 
-  const out = { label: null, byType: { ecole: [], college: [], lycee: [] } };
+  async function fetchAll(dataset){
+    async function tryRef(field, code){
+      const p = new URLSearchParams({ dataset, rows:"5000" });
+      p.append(`refine.${field}`, code);
+      const r = await fetch(`${BASE}?${p}`); if(!r.ok) return [];
+      const js = await r.json();
+      return (js.records||[]).map(rec => rec.fields || {});
+    }
+    // essaie code_du_departement puis code_departement, 094 puis 94
+    let rows = await tryRef("code_du_departement", code3);
+    if (!rows.length) rows = await tryRef("code_du_departement", code2);
+    if (!rows.length) rows = await tryRef("code_departement",  code3);
+    if (!rows.length) rows = await tryRef("code_departement",  code2);
 
-  async function ask(dataset){
-    const where = `(code_du_departement = "${code3}" OR code_du_departement = "${code2}")${sectorWhere}`;
-    const url = `${EXPLORE_BASE}${dataset}/records?select=uai,code_uai,ips,indice_position_sociale,indice,appellation_officielle,nom_etablissement,nom_de_l_etablissement,commune,nom_de_la_commune,departement,code_du_departement,secteur&where=${encodeURIComponent(where)}&order_by=ips DESC&limit=10`;
-    const r = await fetch(url);
-    if (!r.ok) return [];
-    const js = await r.json();
-    const rows = js.results || [];
-    return rows.map(x => {
-      const uai = x.uai || x.code_uai;
-      const name = x.appellation_officielle || x.nom_etablissement || x.nom_de_l_etablissement || "Établissement";
-      const commune = x.nom_de_la_commune || x.commune || "";
-      const ips = Number(x.ips ?? x.indice_position_sociale ?? x.indice);
-      if (!out.label) out.label = x.departement || null;
-      return { uai, name, commune, ips, secteur: x.secteur || "—", code_departement: x.code_du_departement || code3 };
+    if (!rows.length){
+      // filet de sécurité : recherche plein texte
+      const p = new URLSearchParams({
+        dataset, rows:"5000",
+        q: `code_du_departement:${code3} OR code_du_departement:${code2} OR code_departement:${code3} OR code_departement:${code2}`
+      });
+      const r = await fetch(`${BASE}?${p}`);
+      if (r.ok){
+        const js = await r.json();
+        rows = (js.records||[]).map(rec => rec.fields || {});
+      }
+    }
+
+    // normalisation des champs utiles
+    return rows.map(f => {
+      const ips = Number(f.ips ?? f.indice_position_sociale ?? f.indice);
+      return {
+        uai: f.uai || f.code_uai || f.numero_uai,
+        name: f.appellation_officielle || f.nom_etablissement || f.nom_de_l_etablissement || f.denomination_principale || "Établissement",
+        commune: f.nom_de_la_commune || f.commune || "",
+        secteur: f.secteur || f.secteur_public_prive || "—",
+        departement_label: f.departement || f.nom_departement || null,
+        rentree: toInt(f.rentree_scolaire ?? f.annee_scolaire ?? f.annee),
+        ips: Number.isFinite(ips) ? ips : null
+      };
     });
   }
 
-  const wanted = ["ecole","college","lycee"].filter(t => typesWanted.has(t));
-  for (const t of wanted){
-    const ds = DS_IPS[t];
-    const arr = await ask(ds);
-    out.byType[t] = arr;
+  const out = { label: null, byType: { ecole: [], college: [], lycee: [] } };
+
+  for (const t of ["ecole","college","lycee"].filter(tt => typesWanted.has(tt))){
+    const dataset = DS_IPS[t];
+    let rows = await fetchAll(dataset);
+
+    // filtre secteur côté client (plus tolérant aux libellés)
+    if (sectorFilter !== "all"){
+      rows = rows.filter(r => {
+        const s = normSect(r.secteur);
+        return sectorFilter === "Public" ? s === "Public" : s === "Privé";
+      });
+    }
+
+    // détecte la dernière rentrée présente (si dispo), puis Top 10 par IPS
+    const years = rows.map(r => r.rentree).filter(v => v != null);
+    const latest = years.length ? Math.max(...years) : null;
+
+    let filtered = latest != null ? rows.filter(r => r.rentree === latest) : rows;
+    filtered = filtered.filter(r => r.ips != null).sort((a,b) => b.ips - a.ips).slice(0, 10);
+
+    if (!out.label) out.label = rows.find(r => r.departement_label)?.departement_label || code3;
+    out.byType[t] = filtered;
   }
-  if (!out.label) out.label = code2; // fallback si le dataset ne renvoie pas le libellé
+
+  if (!out.label) out.label = code3;
   return out;
 }
 
-/* pour poser des marqueurs si dispos : récupère lat/lon depuis l’annuaire géoloc */
+/* -------------------- Géoloc par UAI (pour poser des marqueurs) -------------------- */
 export async function fetchGeoByUai(uai){
   const p = new URLSearchParams({ dataset: DS_GEO, rows: "1" });
   p.append("refine.numero_uai", uai);
