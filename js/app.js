@@ -1,15 +1,15 @@
-// js/app.js  (v=10)
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=10";
-import { geocode } from "./geocode.js?v=10";
+// js/app.js (v=11)
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=11";
+import { geocode } from "./geocode.js?v=11";
 import {
   fetchEstablishmentsAround,
   buildIPSIndex,
   fetchTop10DeptDirect,
   fetchGeoByUai,
   resolveDepartement
-} from "./data.js?v=10";
-import { distanceMeters, isDeptCode } from "./util.js?v=10";
-import { renderList, setCount, showErr } from "./ui.js?v=10";
+} from "./data.js?v=11";
+import { distanceMeters, isDeptCode } from "./util.js?v=11";
+import { renderList, setCount, showErr } from "./ui.js?v=11";
 
 const { map, markersLayer } = initMap();
 let addrCircle = null;
@@ -68,7 +68,7 @@ async function runDeptRanking(q, sectorFilter, typesWanted) {
 
 /* ---------- Autour d'une adresse ---------- */
 async function runAddressSearch(q, radiusKm, sectorFilter, typesWanted) {
-  const { lat, lon, label } = await geocode(q); // BAN → {lat, lon, label}
+  const { lat, lon, label } = await geocode(q);
   addrLat = lat; addrLon = lon;
 
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
