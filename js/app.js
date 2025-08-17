@@ -1,36 +1,31 @@
-// js/app.js  (v=7)
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=7";
-import { geocode } from "./geocode.js?v=7";
+// js/app.js  (v=10)
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=10";
+import { geocode } from "./geocode.js?v=10";
 import {
   fetchEstablishmentsAround,
   buildIPSIndex,
   fetchTop10DeptDirect,
   fetchGeoByUai,
   resolveDepartement
-} from "./data.js?v=7";
-import { distanceMeters, isDeptCode } from "./util.js?v=7";
-import { renderList, setCount, showErr } from "./ui.js?v=7";
+} from "./data.js?v=10";
+import { distanceMeters, isDeptCode } from "./util.js?v=10";
+import { renderList, setCount, showErr } from "./ui.js?v=10";
 
 const { map, markersLayer } = initMap();
 let addrCircle = null;
 let addrLat = null, addrLon = null;
 
-/* ---------- Top 10 par département (direct sur jeux IPS, auto-détection de la dernière rentrée) ---------- */
+/* ---------- Top 10 par département ---------- */
 async function runDeptRanking(q, sectorFilter, typesWanted) {
   const dep = await resolveDepartement(q);
   const depCode = dep?.code || q.trim();
-
-  // Interroge directement les datasets IPS (sans filtrer a priori par "rentrée"),
-  // détecte la dernière année présente, trie sur IPS et coupe Top 10.
   const { label, byType } = await fetchTop10DeptDirect(depCode, sectorFilter, typesWanted);
 
-  // UI
   const count = document.getElementById('count');
   const list  = document.getElementById('list');
   list.innerHTML = "";
   count.textContent = `Top 10 — Département ${label || depCode} (${sectorFilter==="all"?"Tous secteurs":sectorFilter})`;
 
-  // carte
   markersLayer.clearLayers();
 
   const order = ["ecole","college","lycee"].filter(t => typesWanted.has(t));
@@ -43,14 +38,9 @@ async function runDeptRanking(q, sectorFilter, typesWanted) {
 
     for (let i=0; i<arr.length; i++){
       const it = arr[i];
-
-      // essaie de récupérer des coordonnées pour la carte
-      try {
-        if (it.uai && (it.lat==null || it.lon==null)) {
-          const g = await fetchGeoByUai(it.uai);
-          if (g){ it.lat = g.lat; it.lon = g.lon; }
-        }
-      } catch {}
+      try { if (it.uai && (it.lat==null || it.lon==null)) {
+        const g = await fetchGeoByUai(it.uai); if (g){ it.lat=g.lat; it.lon=g.lon; }
+      }} catch {}
 
       const row = document.createElement('div');
       row.className = "item";
@@ -61,7 +51,6 @@ async function runDeptRanking(q, sectorFilter, typesWanted) {
           <div class="ips">IPS : ${Number(it.ips).toFixed(1)}</div>
           <div class="dist">UAI : ${it.uai}</div>
         </div>`;
-
       if (it.lat && it.lon){
         const m = markerFor({ ...it, type:t }, new Map([[it.uai, it.ips]]));
         m.addTo(markersLayer);
@@ -77,9 +66,9 @@ async function runDeptRanking(q, sectorFilter, typesWanted) {
   else showErr("Top 10 listé (pas ou peu de coordonnées disponibles pour la carte).");
 }
 
-/* ---------- Recherche autour d'une adresse (inchangé) ---------- */
+/* ---------- Autour d'une adresse ---------- */
 async function runAddressSearch(q, radiusKm, sectorFilter, typesWanted) {
-  const { lat, lon, label } = await geocode(q);
+  const { lat, lon, label } = await geocode(q); // BAN → {lat, lon, label}
   addrLat = lat; addrLon = lon;
 
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
