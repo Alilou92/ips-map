@@ -1,13 +1,13 @@
-// js/data.js  (v=10)
-import { BASE, DS_GEO, DS_IPS } from "./config.js";
+// js/data.js (v=11)
+import { BASE, DS_GEO, DS_IPS, EXPLORE_BASE } from "./config.js";
 import { extractEstablishment, stripDiacritics } from "./util.js";
 
-/* -------------------- Autour d'une adresse -------------------- */
+/* ---------- Autour d'une adresse ---------- */
 export async function fetchEstablishmentsAround(lat, lon, radiusMeters, sectorFilter, typesWanted){
   const params = new URLSearchParams({
     dataset: DS_GEO,
     rows: "600",
-    // ✅ bon paramètre Opendatasoft :
+    // IMPORTANT : param correct (avec point)
     "geofilter.distance": `${lat},${lon},${radiusMeters}`
   });
   params.append("facet","secteur");
@@ -17,12 +17,16 @@ export async function fetchEstablishmentsAround(lat, lon, radiusMeters, sectorFi
   const r = await fetch(`${BASE}?${params}`);
   if(!r.ok) throw new Error("Données indisponibles (annuaire)");
   const js = await r.json();
-  let feats = (js.records||[]).map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai) || [];
-  if (sectorFilter!=="all") feats = feats.filter(x=>x.secteur===sectorFilter);
+
+  let feats = (js.records||[])
+    .map(rec=>extractEstablishment(rec.fields))
+    .filter(x=>x.lat&&x.lon&&x.uai) || [];
+
+  if (sectorFilter !== "all") feats = feats.filter(x=>x.secteur===sectorFilter);
   return feats.filter(x=>typesWanted.has(x.type));
 }
 
-/* -------------------- Utilitaires annuaire (inchangés) -------------------- */
+/* ---------- Utilitaires (annuaire par département) ---------- */
 export async function fetchEstablishmentsInDepartement(depCode){
   depCode = String(depCode).toUpperCase();
   const tryRefine = async(field)=>{
@@ -34,20 +38,22 @@ export async function fetchEstablishmentsInDepartement(depCode){
   let js = await tryRefine('code_departement');
   if (!js.records?.length) js = await tryRefine('code_du_departement');
   if (!js.records?.length){
-    const p = new URLSearchParams({ dataset:DS_GEO, rows:"5000", q:`code_departement:${depCode} OR code_du_departement:${depCode}` });
+    const p = new URLSearchParams({
+      dataset:DS_GEO, rows:"5000",
+      q:`code_departement:${depCode} OR code_du_departement:${depCode}`
+    });
     p.append("facet","secteur"); p.append("facet","libelles_nature"); p.append("facet","nature_uai_libe");
     const r = await fetch(`${BASE}?${p}`); js = r.ok ? await r.json() : {records:[]};
   }
-  return (js.records||[]).map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai&&x.type);
+  return (js.records||[]).map(rec=>extractEstablishment(rec.fields))
+           .filter(x=>x.lat&&x.lon&&x.uai&&x.type);
 }
 
-/* -------------------- Index IPS (autour d'une adresse) -------------------- */
+/* ---------- Index IPS (autour adresse) — Explore pour IN (UAI…) ---------- */
 export async function buildIPSIndex(uaisByType){
   const result = new Map();
 
   async function fetchIpsChunk(dataset, uaisChunk){
-    // On garde Explore pour requêter par liste d'UAI
-    const EXPLORE_BASE = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/";
     const list = uaisChunk.map(u => `"${u}"`).join(",");
     let url = `${EXPLORE_BASE}${dataset}/records?select=uai,ips,indice_position_sociale,indice&where=uai IN (${list})&limit=1000`;
     let r = await fetch(url); let js = r.ok ? await r.json() : { results: [] }; let rows = js.results || [];
@@ -75,7 +81,7 @@ export async function buildIPSIndex(uaisByType){
   return result;
 }
 
-/* -------------------- Rentrée (info) -------------------- */
+/* ---------- Rentrée (info) ---------- */
 export async function getLatestRentree(dataset){
   try{
     const p = new URLSearchParams({ dataset, rows:"0", facet:"rentree_scolaire" });
@@ -86,7 +92,7 @@ export async function getLatestRentree(dataset){
   } catch { return null; }
 }
 
-/* -------------------- Résolution département -------------------- */
+/* ---------- Résolution département (texte -> code) ---------- */
 export async function resolveDepartement(input){
   const s = input.trim();
   const isCode = /^(2A|2B|\d{2,3})$/i.test(s);
@@ -125,7 +131,7 @@ export async function resolveDepartement(input){
   return null;
 }
 
-/* -------------------- Top 10 département (via API search v1.0) -------------------- */
+/* ---------- Top 10 département (API search v1.0, robuste) ---------- */
 function padDeptCodes(inp){
   const c = String(inp).toUpperCase().trim();
   const c2 = c;                                // "94", "2A", "971"...
@@ -209,7 +215,7 @@ export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
   return out;
 }
 
-/* -------------------- Géoloc par UAI -------------------- */
+/* ---------- Géoloc par UAI (pour poser les marqueurs Top 10) ---------- */
 export async function fetchGeoByUai(uai){
   const p = new URLSearchParams({ dataset: DS_GEO, rows: "1" });
   p.append("refine.numero_uai", uai);
