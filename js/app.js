@@ -1,15 +1,15 @@
 // js/app.js (v=20)
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=20";
-import { geocode } from "./geocode.js?v=20";
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=21";
+import { geocode } from "./geocode.js?v=21";
 import {
   fetchEstablishmentsAround,
   buildIPSIndex,
   fetchTop10DeptDirect,
   fetchGeoByUai,
   resolveDepartement
-} from "./data.js?v=20";
-import { distanceMeters, isDeptCode } from "./util.js?v=20";
-import { renderList, setCount, showErr } from "./ui.js?v=20";
+} from "./data.js?v=21";
+import { distanceMeters, isDeptCode } from "./util.js?v=21";
+import { renderList, setCount, showErr } from "./ui.js?v=21";
 
 const { map, markersLayer } = initMap();
 let addrCircle = null;
