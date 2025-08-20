@@ -1,4 +1,4 @@
-// js/data.js (v=18)
+// js/data.js (v=19)
 import { BASE, DS_GEO, DS_IPS, EXPLORE_BASE } from "./config.js";
 import { extractEstablishment, stripDiacritics } from "./util.js";
 
@@ -215,7 +215,7 @@ export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
   return out;
 }
 
-/* ---------- Géolocalisation par UAI (pour poser des marqueurs Top 10) ---------- */
+/* ---------- Géolocalisation par UAI (POUR l’affichage sur la carte) ---------- */
 export async function fetchGeoByUai(uai){
   try{
     const p = new URLSearchParams({ dataset: DS_GEO, rows: "1" });
