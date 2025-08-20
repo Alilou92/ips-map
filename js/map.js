@@ -1,46 +1,87 @@
-export function initMap(){
-  const map = L.map('map').setView([46.8, 2.5], 6);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-    maxZoom: 19, attribution:'&copy; OpenStreetMap'
+// js/map.js  (v=15)
+export function initMap() {
+  // Centre par défaut: Paris
+  const map = L.map('map', {
+    center: [48.8566, 2.3522],
+    zoom: 12,
+    zoomControl: true
+  });
+
+  // Tuiles OpenStreetMap
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> • ' +
+      'Rendu via <a href="https://leafletjs.com/">Leaflet</a>'
   }).addTo(map);
+
+  // Couche pour nos marqueurs
   const markersLayer = L.layerGroup().addTo(map);
+
+  // Dans certains layouts flex, Leaflet a besoin d’un invalidateSize
+  setTimeout(() => { try { map.invalidateSize(); } catch(e) {} }, 50);
+
   return { map, markersLayer };
 }
-function colorForIPS(ips){
-  if (ips == null) return "#888888";
-  if (ips < 90) return "#d7191c";
-  if (ips <= 110) return "#fdae61";
-  return "#1a9641";
+
+export function drawAddressCircle(map, lat, lon, radiusMeters) {
+  const circle = L.circle([lat, lon], {
+    radius: radiusMeters,
+    color: '#1976d2',
+    weight: 2,
+    opacity: 0.9,
+    fillColor: '#42a5f5',
+    fillOpacity: 0.08
+  }).addTo(map);
+  map.setView([lat, lon], radiusMeters <= 1200 ? 15 : 13);
+  return circle;
 }
-export function markerFor(est, ipsMap){
-  const ips = ipsMap.has(est.uai) ? ipsMap.get(est.uai) : null;
-  const color = colorForIPS(ips);
-  const icon = L.divIcon({
-    className: "ips-marker",
-    html: `<div style="width:14px;height:14px;background:${color};border:2px solid #fff;border-radius:50%;box-shadow:0 0 2px rgba(0,0,0,.4)"></div>`,
-    iconSize: [14,14], iconAnchor: [7,7]
+
+function colorForIPS(ips) {
+  if (ips == null || isNaN(ips)) return '#777';
+  if (ips < 90) return '#d32f2f';
+  if (ips <= 110) return '#f6b73c';
+  return '#2e7d32';
+}
+
+function labelForType(t) {
+  return t === 'ecole' ? 'École' : t === 'college' ? 'Collège' : t === 'lycee' ? 'Lycée' : 'Établissement';
+}
+
+export function markerFor(est, ipsMapOrValue) {
+  const ips = ipsMapOrValue instanceof Map
+    ? ipsMapOrValue.get(est.uai)
+    : (typeof ipsMapOrValue === 'number' ? ipsMapOrValue : est.ips);
+
+  const marker = L.circleMarker([est.lat, est.lon], {
+    radius: 7,
+    color: colorForIPS(ips),
+    weight: 2,
+    fillColor: colorForIPS(ips),
+    fillOpacity: 0.85
   });
-  const sectBadge = `<span class="badge">${est.secteur}</span>`;
-  const tLabel = (est.type==="ecole"?"École":est.type==="college"?"Collège":"Lycée");
-  const ipsText = (ips!=null) ? `<strong>IPS :</strong> ${ips.toFixed(1)}` : `<em>IPS non publié</em>`;
-  const popup = `
-    <div>
-      <div style="font-weight:600">${est.name} ${sectBadge}</div>
-      <div>${tLabel} – ${est.nature || ""}</div>
-      <div>${est.adresse || ""}${est.code_postal?" • "+est.code_postal:""} ${est.commune||""}</div>
-      <div style="margin-top:6px">${ipsText}</div>
-      <div style="margin-top:6px;font-size:12px;color:#666">UAI : ${est.uai}</div>
+
+  const typeLabel = labelForType(est.type);
+  const ipsTxt = ips == null || isNaN(ips) ? '<span style="color:#777">non publié</span>' : ips.toFixed(1);
+
+  const html =
+    `<div style="min-width:220px">
+      <div style="font-weight:600">${est.name || 'Établissement'}</div>
+      <div style="font-size:12px;opacity:.8">${typeLabel} — ${est.commune || ''}</div>
+      <div style="margin-top:6px">IPS : <strong>${ipsTxt}</strong></div>
+      ${est.uai ? `<div style="font-size:12px;opacity:.75">UAI : ${est.uai}</div>` : ''}
     </div>`;
-  return L.marker([est.lat, est.lon], {icon}).bindPopup(popup);
+
+  marker.bindPopup(html, { maxWidth: 280 });
+  return marker;
 }
-export function drawAddressCircle(map, lat, lon, radiusMeters){
-  const c = L.circle([lat,lon], {radius: radiusMeters, color:'#3b82f6'});
-  c.addTo(map);
-  map.setView([lat,lon], 15);
-  return c;
-}
-export function fitToMarkers(map, items){
-  if (!items.length) return;
-  const g = L.featureGroup(items.map(f => L.marker([f.lat,f.lon])));
-  map.fitBounds(g.getBounds().pad(0.2));
+
+export function fitToMarkers(map, items) {
+  const pts = items
+    .map(x => [Number(x.lat), Number(x.lon)])
+    .filter(([la, lo]) => Number.isFinite(la) && Number.isFinite(lo));
+
+  if (!pts.length) return;
+  const bounds = L.latLngBounds(pts);
+  if (bounds.isValid()) map.fitBounds(bounds, { padding: [28, 28] });
 }
