@@ -1,21 +1,32 @@
-// js/data.js
+// js/data.js (v=18)
 import { BASE, DS_GEO, DS_IPS, EXPLORE_BASE } from "./config.js";
 import { extractEstablishment, stripDiacritics } from "./util.js";
 
+/* ---------- Autour d'une adresse ---------- */
 export async function fetchEstablishmentsAround(lat, lon, radiusMeters, sectorFilter, typesWanted){
   const params = new URLSearchParams({
     dataset: DS_GEO,
     rows: "600",
-    // ✅ paramètre correct Opendatasoft (avec un point)
+    // IMPORTANT : le paramètre correct a un point
     "geofilter.distance": `${lat},${lon},${radiusMeters}`
   });
-  params.append("facet","secteur"); params.append("facet","libelles_nature"); params.append("facet","nature_uai_libe");
-  const r = await fetch(`${BASE}?${params}`); if(!r.ok) throw new Error("Données indisponibles");
-  let feats = (await r.json()).records?.map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai) || [];
-  if (sectorFilter!=="all") feats = feats.filter(x=>x.secteur===sectorFilter);
+  params.append("facet","secteur");
+  params.append("facet","libelles_nature");
+  params.append("facet","nature_uai_libe");
+
+  const r = await fetch(`${BASE}?${params}`);
+  if(!r.ok) throw new Error("Données indisponibles (annuaire)");
+  const js = await r.json();
+
+  let feats = (js.records||[])
+    .map(rec=>extractEstablishment(rec.fields))
+    .filter(x=>x.lat!=null && x.lon!=null && x.uai);
+
+  if (sectorFilter !== "all") feats = feats.filter(x=>x.secteur===sectorFilter);
   return feats.filter(x=>typesWanted.has(x.type));
 }
 
+/* ---------- Utilitaires (annuaire par département) ---------- */
 export async function fetchEstablishmentsInDepartement(depCode){
   depCode = String(depCode).toUpperCase();
   const tryRefine = async(field)=>{
@@ -27,15 +38,21 @@ export async function fetchEstablishmentsInDepartement(depCode){
   let js = await tryRefine('code_departement');
   if (!js.records?.length) js = await tryRefine('code_du_departement');
   if (!js.records?.length){
-    const p = new URLSearchParams({ dataset:DS_GEO, rows:"5000", q:`code_departement:${depCode} OR code_du_departement:${depCode}` });
+    const p = new URLSearchParams({
+      dataset:DS_GEO, rows:"5000",
+      q:`code_departement:${depCode} OR code_du_departement:${depCode}`
+    });
     p.append("facet","secteur"); p.append("facet","libelles_nature"); p.append("facet","nature_uai_libe");
     const r = await fetch(`${BASE}?${p}`); js = r.ok ? await r.json() : {records:[]};
   }
-  return (js.records||[]).map(rec=>extractEstablishment(rec.fields)).filter(x=>x.lat&&x.lon&&x.uai&&x.type);
+  return (js.records||[]).map(rec=>extractEstablishment(rec.fields))
+           .filter(x=>x.lat!=null && x.lon!=null && x.uai && x.type);
 }
 
+/* ---------- Index IPS (autour adresse) — Explore pour IN (UAI…) ---------- */
 export async function buildIPSIndex(uaisByType){
   const result = new Map();
+
   async function fetchIpsChunk(dataset, uaisChunk){
     const list = uaisChunk.map(u => `"${u}"`).join(",");
     let url = `${EXPLORE_BASE}${dataset}/records?select=uai,ips,indice_position_sociale,indice&where=uai IN (${list})&limit=1000`;
@@ -49,6 +66,7 @@ export async function buildIPSIndex(uaisByType){
     }
     return rows;
   }
+
   for (const [k,dataset] of Object.entries(DS_IPS)){
     const set = uaisByType[k]; if (!set?.size) continue;
     const uais = Array.from(set); const chunk = 90;
@@ -63,6 +81,7 @@ export async function buildIPSIndex(uaisByType){
   return result;
 }
 
+/* ---------- Rentrée (info) ---------- */
 export async function getLatestRentree(dataset){
   try{
     const p = new URLSearchParams({ dataset, rows:"0", facet:"rentree_scolaire" });
@@ -73,6 +92,7 @@ export async function getLatestRentree(dataset){
   } catch { return null; }
 }
 
+/* ---------- Résolution département (texte -> code) ---------- */
 export async function resolveDepartement(input){
   const s = input.trim();
   const isCode = /^(2A|2B|\d{2,3})$/i.test(s);
@@ -109,4 +129,122 @@ export async function resolveDepartement(input){
     } catch {}
   }
   return null;
+}
+
+/* ---------- Top 10 département (API search v1.0, robuste) ---------- */
+function padDeptCodes(inp){
+  const c = String(inp).toUpperCase().trim();
+  const c2 = c;                                // "94", "2A", "971"...
+  const c3 = /^\d{2}$/.test(c2) ? "0"+c2 : c2; // "94" -> "094"
+  return [c2, c3];
+}
+const toInt = v => { const n = parseInt(v,10); return Number.isFinite(n) ? n : null; };
+const normSect = s => {
+  s = (s||"").toLowerCase();
+  if (s.startsWith("pub")) return "Public";
+  if (s.startsWith("priv")) return "Privé";
+  return "—";
+};
+
+export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
+  const [code2, code3] = padDeptCodes(depInput);
+
+  async function fetchAll(dataset){
+    async function tryRef(field, code){
+      const p = new URLSearchParams({ dataset, rows:"5000" });
+      p.append(`refine.${field}`, code);
+      const r = await fetch(`${BASE}?${p}`); if(!r.ok) return [];
+      const js = await r.json();
+      return (js.records||[]).map(rec => rec.fields || {});
+    }
+    let rows = await tryRef("code_du_departement", code3);
+    if (!rows.length) rows = await tryRef("code_du_departement", code2);
+    if (!rows.length) rows = await tryRef("code_departement",  code3);
+    if (!rows.length) rows = await tryRef("code_departement",  code2);
+
+    if (!rows.length){
+      const p = new URLSearchParams({
+        dataset, rows:"5000",
+        q: `code_du_departement:${code3} OR code_du_departement:${code2} OR code_departement:${code3} OR code_departement:${code2}`
+      });
+      const r = await fetch(`${BASE}?${p}`);
+      if (r.ok){
+        const js = await r.json();
+        rows = (js.records||[]).map(rec => rec.fields || {});
+      }
+    }
+
+    return rows.map(f => {
+      const ips = Number(f.ips ?? f.indice_position_sociale ?? f.indice);
+      return {
+        uai: f.uai || f.code_uai || f.numero_uai,
+        name: f.appellation_officielle || f.nom_etablissement || f.nom_de_l_etablissement || f.denomination_principale || "Établissement",
+        commune: f.nom_de_la_commune || f.commune || "",
+        secteur: f.secteur || f.secteur_public_prive || "—",
+        departement_label: f.departement || f.nom_departement || null,
+        rentree: toInt(f.rentree_scolaire ?? f.annee_scolaire ?? f.annee),
+        ips: Number.isFinite(ips) ? ips : null
+      };
+    });
+  }
+
+  const out = { label: null, byType: { ecole: [], college: [], lycee: [] } };
+
+  for (const t of ["ecole","college","lycee"].filter(tt => typesWanted.has(tt))){
+    const dataset = DS_IPS[t];
+    let rows = await fetchAll(dataset);
+
+    if (sectorFilter !== "all"){
+      rows = rows.filter(r => {
+        const s = normSect(r.secteur);
+        return sectorFilter === "Public" ? s === "Public" : s === "Privé";
+      });
+    }
+
+    const years = rows.map(r => r.rentree).filter(v => v != null);
+    const latest = years.length ? Math.max(...years) : null;
+
+    let filtered = latest != null ? rows.filter(r => r.rentree === latest) : rows;
+    filtered = filtered.filter(r => r.ips != null).sort((a,b) => b.ips - a.ips).slice(0, 10);
+
+    if (!out.label) out.label = rows.find(r => r.departement_label)?.departement_label || code3;
+    out.byType[t] = filtered;
+  }
+
+  if (!out.label) out.label = code3;
+  return out;
+}
+
+/* ---------- Géolocalisation par UAI (pour poser des marqueurs Top 10) ---------- */
+export async function fetchGeoByUai(uai){
+  try{
+    const p = new URLSearchParams({ dataset: DS_GEO, rows: "1" });
+    p.append("refine.numero_uai", uai);
+    const r = await fetch(`${BASE}?${p}`);
+    if (!r.ok) return null;
+    const js = await r.json();
+    const f = js.records?.[0]?.fields;
+    if (!f) return null;
+
+    const w = f.wgs84 || f.geo_point_2d || f.geopoint || f.geolocalisation || f.geometry;
+
+    if (w && typeof w === "object" && "lat" in w && ("lon" in w || "lng" in w)) {
+      return { lat: Number(w.lat), lon: Number(w.lon ?? w.lng) };
+    }
+    if (w && typeof w === "object" && Array.isArray(w.coordinates) && w.coordinates.length >= 2) {
+      const [lon, lat] = w.coordinates; return { lat: Number(lat), lon: Number(lon) };
+    }
+    if (typeof f.geo_point_2d === "string") {
+      const parts = f.geo_point_2d.split(",").map(s => Number(s.trim()));
+      if (parts.length >= 2 && parts.every(Number.isFinite)) return { lat: parts[0], lon: parts[1] };
+    }
+    if (Array.isArray(w) && w.length >= 2) {
+      const a = Number(w[0]), b = Number(w[1]);
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lon: b };
+        return { lat: b, lon: a };
+      }
+    }
+    return null;
+  } catch { return null; }
 }
