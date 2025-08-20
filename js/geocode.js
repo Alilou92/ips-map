@@ -1,4 +1,4 @@
-// js/geocode.js (v=11) — BAN
+// js/geocode.js (v=18) — BAN
 export async function geocode(q){
   const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=1&autocomplete=1`;
   const r = await fetch(url);
