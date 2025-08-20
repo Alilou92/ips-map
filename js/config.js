@@ -1,8 +1,8 @@
-// js/config.js (v=11)
-// API search v1.0 (robuste, CORS OK)
+// js/config.js (v=18)
+// API search v1.0
 export const BASE = "https://data.education.gouv.fr/api/records/1.0/search/";
 
-// Annuaire géolocalisé (écoles+collèges+lycées avec lat/lon)
+// Annuaire géolocalisé (lat/lon + UAI)
 export const DS_GEO = "fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre";
 
 // Jeux IPS (dernières éditions connues)
@@ -12,5 +12,5 @@ export const DS_IPS = {
   lycee:   "fr-en-ips-lycees-ap2023"
 };
 
-// API Explore (uniquement pour requêtes "IN (liste d'UAI)" côté adresse)
+// API Explore v2.1 (uniquement pour WHERE IN (liste d'UAI))
 export const EXPLORE_BASE = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/";
