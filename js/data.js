@@ -1,32 +1,42 @@
-// js/data.js (v=19)
+// js/data.js (v=21)
 import { BASE, DS_GEO, DS_IPS, EXPLORE_BASE } from "./config.js";
 import { extractEstablishment, stripDiacritics } from "./util.js";
 
-/* ---------- Autour d'une adresse ---------- */
+/* ---------- Autour d'une adresse (avec fallback lat/lon ↔ lon/lat) ---------- */
 export async function fetchEstablishmentsAround(lat, lon, radiusMeters, sectorFilter, typesWanted){
-  const params = new URLSearchParams({
-    dataset: DS_GEO,
-    rows: "600",
-    // IMPORTANT : le paramètre correct a un point
-    "geofilter.distance": `${lat},${lon},${radiusMeters}`
-  });
-  params.append("facet","secteur");
-  params.append("facet","libelles_nature");
-  params.append("facet","nature_uai_libe");
+  async function askDistance(latArg, lonArg){
+    const params = new URLSearchParams({
+      dataset: DS_GEO,
+      rows: "800",
+      "geofilter.distance": `${latArg},${lonArg},${radiusMeters}`
+    });
+    params.append("facet","secteur");
+    params.append("facet","libelles_nature");
+    params.append("facet","nature_uai_libe");
+    const r = await fetch(`${BASE}?${params}`);
+    if (!r.ok) return [];
+    const js = await r.json();
+    return (js.records||[])
+      .map(rec => extractEstablishment(rec.fields))
+      .filter(x => x.lat!=null && x.lon!=null && x.uai);
+  }
 
-  const r = await fetch(`${BASE}?${params}`);
-  if(!r.ok) throw new Error("Données indisponibles (annuaire)");
-  const js = await r.json();
+  // 1) tentative standard (lat,lon)
+  let feats = await askDistance(lat, lon);
 
-  let feats = (js.records||[])
-    .map(rec=>extractEstablishment(rec.fields))
-    .filter(x=>x.lat!=null && x.lon!=null && x.uai);
+  // 2) fallback si 0 résultat : certaines instances Opendatasoft attendent lon,lat
+  if (!feats.length) {
+    feats = await askDistance(lon, lat);
+  }
 
-  if (sectorFilter !== "all") feats = feats.filter(x=>x.secteur===sectorFilter);
-  return feats.filter(x=>typesWanted.has(x.type));
+  // Filtrages
+  if (sectorFilter !== "all") feats = feats.filter(x => x.secteur === sectorFilter);
+  if (typesWanted && typesWanted.size) feats = feats.filter(x => typesWanted.has(x.type));
+
+  return feats;
 }
 
-/* ---------- Utilitaires (annuaire par département) ---------- */
+/* ---------- Annuaire par département ---------- */
 export async function fetchEstablishmentsInDepartement(depCode){
   depCode = String(depCode).toUpperCase();
   const tryRefine = async(field)=>{
@@ -49,7 +59,7 @@ export async function fetchEstablishmentsInDepartement(depCode){
            .filter(x=>x.lat!=null && x.lon!=null && x.uai && x.type);
 }
 
-/* ---------- Index IPS (autour adresse) — Explore pour IN (UAI…) ---------- */
+/* ---------- Index IPS (autour adresse) — WHERE IN (UAI…) ---------- */
 export async function buildIPSIndex(uaisByType){
   const result = new Map();
 
@@ -215,7 +225,7 @@ export async function fetchTop10DeptDirect(depInput, sectorFilter, typesWanted){
   return out;
 }
 
-/* ---------- Géolocalisation par UAI (POUR l’affichage sur la carte) ---------- */
+/* ---------- Géolocalisation par UAI (pour la carte Top 10) ---------- */
 export async function fetchGeoByUai(uai){
   try{
     const p = new URLSearchParams({ dataset: DS_GEO, rows: "1" });
