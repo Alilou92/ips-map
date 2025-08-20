@@ -1,13 +1,11 @@
-// js/map.js  (v=15)
+// js/map.js  (v=18)
 export function initMap() {
-  // Centre par défaut: Paris
   const map = L.map('map', {
     center: [48.8566, 2.3522],
     zoom: 12,
     zoomControl: true
   });
 
-  // Tuiles OpenStreetMap
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution:
@@ -15,10 +13,8 @@ export function initMap() {
       'Rendu via <a href="https://leafletjs.com/">Leaflet</a>'
   }).addTo(map);
 
-  // Couche pour nos marqueurs
   const markersLayer = L.layerGroup().addTo(map);
 
-  // Dans certains layouts flex, Leaflet a besoin d’un invalidateSize
   setTimeout(() => { try { map.invalidateSize(); } catch(e) {} }, 50);
 
   return { map, markersLayer };
