@@ -1,30 +1,21 @@
-// js/app.js (v=16)
-/* -------------------------------------------------------------
-   Application IPS Map – contrôleur principal
-   - Recherche par département  (Top 10)
-   - Recherche autour d'une adresse/ville/rue
-   ------------------------------------------------------------- */
-
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=16";
-import { geocode } from "./geocode.js?v=16";
+// js/app.js (v=18)
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=18";
+import { geocode } from "./geocode.js?v=18";
 import {
   fetchEstablishmentsAround,
   buildIPSIndex,
   fetchTop10DeptDirect,
   fetchGeoByUai,
   resolveDepartement
-} from "./data.js?v=16";
-import { distanceMeters, isDeptCode } from "./util.js?v=16";
-import { renderList, setCount, showErr } from "./ui.js?v=16";
+} from "./data.js?v=18";
+import { distanceMeters, isDeptCode } from "./util.js?v=18";
+import { renderList, setCount, showErr } from "./ui.js?v=18";
 
 const { map, markersLayer } = initMap();
 let addrCircle = null;
 let addrLat = null, addrLon = null;
 
-function clearErr() {
-  const el = document.getElementById('err');
-  if (el) el.textContent = '';
-}
+function clearErr() { const el = document.getElementById('err'); if (el) el.textContent = ''; }
 
 /* ---------- Top 10 par département ---------- */
 async function runDeptRanking(q, sectorFilter, typesWanted) {
@@ -37,7 +28,6 @@ async function runDeptRanking(q, sectorFilter, typesWanted) {
   list.innerHTML = "";
   count.textContent = `Top 10 — Département ${label || depCode} (${sectorFilter==="all"?"Tous secteurs":sectorFilter})`;
 
-  // Nettoie la carte
   markersLayer.clearLayers();
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
 
@@ -49,10 +39,8 @@ async function runDeptRanking(q, sectorFilter, typesWanted) {
     const sec = document.createElement('div');
     sec.innerHTML = `<div class="sectionTitle">${human} — Top 10 <span class="pill small">${label || depCode}</span></div>`;
 
-    // On récupère (si possible) les coords pour les marqueurs, mais sans bloquer l’UI
     for (let i=0; i<arr.length; i++){
       const it = arr[i];
-
       try {
         if (it.uai && (it.lat==null || it.lon==null)) {
           const g = await fetchGeoByUai(it.uai);
@@ -69,7 +57,6 @@ async function runDeptRanking(q, sectorFilter, typesWanted) {
           <div class="ips">IPS : ${Number(it.ips).toFixed(1)}</div>
           <div class="dist">UAI : ${it.uai}</div>
         </div>`;
-
       if (it.lat && it.lon){
         const m = markerFor({ ...it, type:t }, new Map([[it.uai, it.ips]]));
         m.addTo(markersLayer);
@@ -87,36 +74,28 @@ async function runDeptRanking(q, sectorFilter, typesWanted) {
 
 /* ---------- Autour d'une adresse ---------- */
 async function runAddressSearch(q, radiusKm, sectorFilter, typesWanted) {
-  // Géocode → {lat, lon, label}
   const { lat, lon, label } = await geocode(q);
   addrLat = lat; addrLon = lon;
 
-  // Cercle de recherche + nettoyage des couches
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
   addrCircle = drawAddressCircle(map, lat, lon, radiusKm * 1000);
 
   markersLayer.clearLayers();
-
-  // Établissements dans le rayon (dataset géolocalisé)
   const feats = await fetchEstablishmentsAround(lat, lon, radiusKm * 1000, sectorFilter, typesWanted);
 
-  // Si aucun résultat, message clair et sortie
   if (!feats.length) {
     setCount("0 établissement trouvé dans le rayon");
-    showErr("Aucun établissement trouvé autour de l’adresse (essaie d’augmenter le rayon ou vérifie l’orthographe).");
-    // On place quand même un marqueur sur l’adresse
+    showErr("Aucun établissement trouvé autour de l’adresse (augmente le rayon ou vérifie l’orthographe).");
     L.marker([lat, lon], {
       icon: L.divIcon({ className: 'src', html: '<div class="src-pin">A</div>' })
     }).bindPopup(`<strong>Adresse recherchée</strong><div>${label}</div>`).addTo(markersLayer);
     return;
   }
 
-  // Récup IPS par UAI (via jeux IPS) pour les établissements trouvés
   const uaisByType = { ecole: new Set(), college: new Set(), lycee: new Set() };
   for (const f of feats) if (f.type) uaisByType[f.type].add(f.uai);
   const ipsMap = await buildIPSIndex(uaisByType);
 
-  // Marqueurs
   const markersByUai = new Map();
   feats.forEach(f => {
     f.distance = distanceMeters(addrLat, addrLon, f.lat, f.lon);
@@ -125,17 +104,14 @@ async function runAddressSearch(q, radiusKm, sectorFilter, typesWanted) {
     markersByUai.set(f.uai, m);
   });
 
-  // Marqueur source (adresse)
   L.marker([lat, lon], {
     icon: L.divIcon({ className: 'src', html: '<div class="src-pin">A</div>' })
   }).bindPopup(`<strong>Adresse recherchée</strong><div>${label}</div>`).addTo(markersLayer);
 
-  // Compteur + tri par distance + rendu liste
   setCount(`${feats.length} établissement${feats.length>1?"s":""} dans ${radiusKm} km`);
   feats.sort((a, b) => (a.distance ?? 1e12) - (b.distance ?? 1e12));
   renderList({ items: feats, ipsMap, markersByUai, map });
 
-  // Ajuste la vue si rien n'a été cliqué
   fitToMarkers(map, feats);
 }
 
@@ -146,34 +122,4 @@ async function runSearch() {
   const sectorFilter = document.getElementById('secteur').value;
   const typesSel = Array.from(document.getElementById('types').selectedOptions).map(o => o.value);
   const typesWanted = new Set(typesSel.length ? typesSel : ["ecole", "college", "lycee"]);
-
-  if (!q) { showErr("Saisis une adresse ou un département"); return; }
-
-  const btn = document.getElementById('go');
-  btn.disabled = true;
-  clearErr();
-  setCount("Chargement…");
-
-  try {
-    const looksLikeDept =
-      !!isDeptCode(q) ||
-      /(^|\b)(départ|dept|dpt|seine|val|corse|alpes|hauts|haute|bouches|côtes|landes|loir|eure|yonne|vienne|marne|somme|loire|vaucluse|var|ain|aisne|ardennes|aveyron|lot|dordogne|hérault|tarn|gers|bretagne|finistère|cantal|doubs|saône|lozère|charente|savoie|isère|gironde|lot-et|haute|moselle|bas-rhin|haut-rhin|pyrénées|yonne|yvelines|paris)\b/i.test(q);
-
-    if (looksLikeDept) {
-      await runDeptRanking(q, sectorFilter, typesWanted);
-    } else {
-      await runAddressSearch(q, radiusKm, sectorFilter, typesWanted);
-    }
-  } catch (e) {
-    console.error(e);
-    showErr("Erreur : " + (e?.message || e));
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-/* ---------- Events ---------- */
-document.getElementById('go').addEventListener('click', runSearch);
-document.getElementById('addr').addEventListener('keydown', e => {
-  if (e.key === 'Enter') runSearch();
-});
+  if (!q) { showErr
