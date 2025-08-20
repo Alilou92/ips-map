@@ -1,15 +1,16 @@
-// js/app.js (v=18)
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=18";
-import { geocode } from "./geocode.js?v=18";
+// js/app.js (entête — v=19)
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=19";
+import { geocode } from "./geocode.js?v=19";
 import {
   fetchEstablishmentsAround,
   buildIPSIndex,
   fetchTop10DeptDirect,
-  fetchGeoByUai,
+  fetchGeoByUai,          // ← maintenant bien exporté par data.js v=19
   resolveDepartement
-} from "./data.js?v=18";
-import { distanceMeters, isDeptCode } from "./util.js?v=18";
-import { renderList, setCount, showErr } from "./ui.js?v=18";
+} from "./data.js?v=19";
+import { distanceMeters, isDeptCode } from "./util.js?v=19";
+import { renderList, setCount, showErr } from "./ui.js?v=19";
+
 
 const { map, markersLayer } = initMap();
 let addrCircle = null;
