@@ -1,150 +1,220 @@
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js";
-import { renderList, setCount, showErr, clearErr } from "./ui.js";
-import { distanceMeters, isDeptCode, isPostcode, km2m } from "./util.js";
+// js/app.js (v=9 - data locales + gardes)
 import Store from "./store.js";
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js";
+import { strip, distanceMeters, isDeptCode } from "./util.js";
+import { renderList, setCount, showErr } from "./ui.js";
 
-/* Géocode très simple : 
-   - si CP => centre de la commune via gazetteer
-   - si nom de ville => centre via gazetteer
-   - sinon ESSAI BAN puis Nominatim (uniquement pour adresses précises) */
-async function geocodeLoose(q){
-  const s = String(q).trim();
-  if (isPostcode(s)){
-    const c = Store.gazetteer.find(x => x.cps.includes(s));
-    if (c) return { lat:c.lat, lon:c.lon, label:`${c.name} (${s})`, postcode:s, commune:c.name };
-  }
-  // commune par nom
-  const c2 = Store.findCommune(s);
-  if (c2) return { lat:c2.lat, lon:c2.lon, label:c2.name, commune:c2.name, postcode:c2.cps[0] };
+// ---- init ----
+const { map, markersLayer } = initMap();
+let addrCircle = null;
+let addrLat = null, addrLon = null;
 
-  // adresse précise (BAN → Nominatim)
-  const tryBAN = async (q) => {
-    try{
-      const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=1`;
-      const r = await fetch(url);
-      if (!r.ok) return null;
-      const js = await r.json();
-      const f = js.features?.[0];
-      if (!f) return null;
-      const [lon, lat] = f.geometry.coordinates;
-      return { lat, lon, label: f.properties?.label || q };
-    }catch{return null;}
-  };
-  const tryNom = async (q) => {
-    try{
-      const url=`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1&addressdetails=1&accept-language=fr`;
-      const r=await fetch(url,{headers:{'Accept':'application/json'}});
-      if(!r.ok) return null;
-      const arr=await r.json(); if(!arr.length) return null;
-      return { lat:Number(arr[0].lat), lon:Number(arr[0].lon), label:arr[0].display_name || q };
-    }catch{return null;}
-  };
-  return await tryBAN(s) || await tryNom(s) || null;
+// Helpers
+function clearErr() {
+  const el = document.getElementById("err");
+  if (el) el.textContent = "";
+}
+const isPostcode = (s) => /^\d{5}$/.test(String(s).trim());
+
+// ---------------- Geocode (local d’abord, puis BAN en secours) ----------------
+async function tryBAN(query) {
+  try {
+    const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1&autocomplete=1&type=street&type=locality&type=municipality&type=postcode&type=housenumber`;
+    const r = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!r.ok) return null;
+    const js = await r.json();
+    const f = js.features?.[0];
+    const coords = f?.geometry?.coordinates;
+    if (Array.isArray(coords) && coords.length >= 2) {
+      const [lon, lat] = coords;
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        const label = f.properties?.label || query;
+        return { lat, lon, label, provider: "BAN" };
+      }
+    }
+  } catch {}
+  return null;
 }
 
-/* Carte & couches */
-const { map, markersLayer } = initMap();
-let addrCircle=null;
-let lastGeo=null;
+/**
+ * géocode “souple” :
+ * - CP (5 chiffres) → cherche dans gazetteer (cps)
+ * - Nom de commune → gazetteer
+ * - Adresse → BAN (secours réseau)
+ */
+async function geocodeLoose(q) {
+  const query = (q || "").trim();
+  if (!query) throw new Error("Adresse introuvable");
 
-/* Recherche par département → Top 10 local */
-async function runDept(depCode, sector, typesWanted){
-  const byType = Store.top10ByDept(depCode, typesWanted, sector);
-  const list = [];
-  for (const t of ["ecole","college","lycee"]){
-    list.push(...byType[t]);
+  if (isPostcode(query)) {
+    const cp = query;
+    const hits = Store.gazetteer.filter(
+      (x) => Array.isArray(x.cps) && x.cps.includes(cp)
+    );
+    if (hits.length) {
+      // centre de la première commune (simple et fiable)
+      const c = hits[0];
+      return { lat: c.lat, lon: c.lon, label: `${c.name} (${cp})`, provider: "GAZ_CP" };
+    }
+    // secours BAN si CP inconnu localement
+    const b = await tryBAN(cp);
+    if (b) return b;
+    throw new Error("Code postal inconnu");
   }
+
+  // Commune (nom)
+  const byName = Store.findCommune(query);
+  if (byName) {
+    return { lat: byName.lat, lon: byName.lon, label: byName.name, provider: "GAZ_NAME" };
+  }
+
+  // Adresse précise → BAN
+  const b = await tryBAN(query);
+  if (b) return b;
+
+  throw new Error("Géocodage indisponible");
+}
+
+// ---------------- Top 10 par département (local) ----------------
+async function runDeptRanking(q, sectorFilter, typesWanted) {
+  const depCode = String(q).toUpperCase().trim();
+  const byType = Store.top10ByDept(depCode, typesWanted, sectorFilter);
+
+  const count = document.getElementById("count");
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+  count.textContent = `Top 10 — Département ${depCode} (${sectorFilter === "all" ? "Tous secteurs" : sectorFilter})`;
+
   markersLayer.clearLayers();
-  const markers = [];
-  for (const e of list){
-    const m = markerFor(e, null); // e.ips déjà injecté
-    m.addTo(markersLayer);
-    markers.push({lat:e.lat,lon:e.lon});
-  }
-  setCount(`Top 10 — Département ${depCode} (${sector==="all"?"Tous secteurs":sector})`);
-  const sidebar = document.getElementById("list");
-  sidebar.innerHTML = "";
-  for (const t of ["ecole","college","lycee"]){
-    if (!typesWanted.has(t)) continue;
-    const human = t==="ecole"?"Écoles":t==="college"?"Collèges":"Lycées";
-    const sec = document.createElement('div');
-    sec.innerHTML = `<div class="sectionTitle">${human} — Top 10 <span class="pill">${depCode}</span></div>`;
-    for (const e of byType[t]){
-      const row = document.createElement('div');
-      row.className="item";
+  if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
+
+  const order = ["ecole", "college", "lycee"].filter((t) => typesWanted.has(t));
+  for (const t of order) {
+    const human = t === "ecole" ? "Écoles" : t === "college" ? "Collèges" : "Lycées";
+    const arr = byType[t] || [];
+
+    const sec = document.createElement("div");
+    sec.innerHTML = `<div class="sectionTitle">${human} — Top 10 <span class="pill small">${depCode}</span></div>`;
+
+    for (let i = 0; i < arr.length; i++) {
+      const it = arr[i];
+
+      const row = document.createElement("div");
+      row.className = "item";
       row.innerHTML = `
-        <div class="name">${e.name}<span class="badge">${e.secteur}</span></div>
-        <div class="meta">${human.slice(0,-1)} — ${e.commune||""}</div>
-        <div class="meta">IPS : ${e.ips!=null?e.ips.toFixed(1):"—"} • UAI : ${e.uai}</div>`;
+        <div class="name">#${i + 1} ${it.name}<span class="badge">${it.secteur || "—"}</span></div>
+        <div class="meta">${human.slice(0, -1)} — ${it.commune || ""}</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+          <div class="ips">IPS : ${Number(it.ips).toFixed(1)}</div>
+          <div class="dist">UAI : ${it.uai}</div>
+        </div>`;
+
+      if (it.lat && it.lon) {
+        const m = markerFor({ ...it, type: t }, new Map([[it.uai, it.ips]]));
+        m.addTo(markersLayer);
+        row.addEventListener("click", () => map.setView([it.lat, it.lon], 16));
+      }
       sec.appendChild(row);
     }
-    sidebar.appendChild(sec);
+    list.appendChild(sec);
   }
-  if (markers.length) fitToMarkers(map, markers);
-  else showErr("Top 10 listé (pas assez de coordonnées).");
+
+  const allWithCoords = order.flatMap((t) => byType[t] || []).filter((x) => x.lat && x.lon);
+  if (allWithCoords.length) fitToMarkers(map, allWithCoords);
+  else showErr("Top 10 listé (peu de coordonnées disponibles pour la carte).");
 }
 
-/* Recherche autour d’un point */
-async function runAround(q, radiusKm, sector, typesWanted){
-  const geo = await geocodeLoose(q);
-  if (!geo){ showErr("Géocodage indisponible pour cette saisie."); return; }
-  lastGeo = geo;
-  const radiusM = km2m(radiusKm);
+// ---------------- Recherche autour d’une adresse (local) ----------------
+async function runAround(q, radiusKm, sectorFilter, typesWanted) {
+  const { lat, lon, label } = await geocodeLoose(q);
+  addrLat = lat; addrLon = lon;
 
-  if (addrCircle){ map.removeLayer(addrCircle); addrCircle=null; }
+  if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
+  addrCircle = drawAddressCircle(map, lat, lon, radiusKm * 1000);
+
   markersLayer.clearLayers();
 
-  addrCircle = drawAddressCircle(map, geo.lat, geo.lon, radiusM);
+  // filtre dans le cache local
+  const feats = Store.establishments
+    .filter((e) => typesWanted.has(e.type))
+    .filter((e) => sectorFilter === "all" || e.secteur === sectorFilter)
+    .map((e) => {
+      const d = distanceMeters(lat, lon, e.lat, e.lon);
+      return { ...e, distance: d };
+    })
+    .filter((e) => e.distance <= radiusKm * 1000)
+    .sort((a, b) => (a.distance ?? 1e12) - (b.distance ?? 1e12));
 
-  // on filtre localement
-  const all = Store.establishments.filter(e => (typesWanted.has(e.type)) && (sector==="all" || e.secteur===sector));
-  const withDist = all.map(e => ({...e, distance: distanceMeters(geo.lat, geo.lon, e.lat, e.lon)}))
-                      .filter(e => e.distance <= radiusM)
-                      .sort((a,b)=>a.distance-b.distance);
+  // marqueurs
+  const markersByUai = new Map();
+  feats.forEach((f) => {
+    const m = markerFor(f, Store.ipsMap);
+    m.addTo(markersLayer);
+    markersByUai.set(f.uai, m);
+  });
 
-  if (!withDist.length){
-    setCount("0 établissement trouvé");
-    showErr("Aucun établissement dans ce rayon (essaie 3 km).");
+  // source A
+  const src = L.marker([lat, lon], {
+    icon: L.divIcon({ className: "src", html: '<div class="src-pin">A</div>' }),
+  }).bindPopup(`<strong>Adresse recherchée</strong><div>${label}</div>`).addTo(markersLayer);
+
+  if (!feats.length) {
+    setCount("0 établissement trouvé dans le rayon");
+    showErr("Aucun établissement trouvé autour de cette zone. Essaie d’élargir le rayon à 2–3 km.");
+    map.setView([lat, lon], radiusKm >= 2 ? 13 : 15);
+    src.openPopup();
     return;
   }
 
-  // join IPS local
-  const ipsMap = Store.ipsMap;
-  const markersByUai = new Map();
-  for (const e of withDist){
-    const ips = ipsMap.get(e.uai);
-    const m = markerFor({...e, ips}, ipsMap);
-    m.addTo(markersLayer);
-    markersByUai.set(e.uai, m);
-  }
-  L.marker([geo.lat, geo.lon], {icon:L.divIcon({className:'src',html:'<div class="src-pin">A</div>'})})
-    .bindPopup(`<strong>Point recherché</strong><div>${geo.label}</div>`).addTo(markersLayer).openPopup();
-
-  setCount(`${withDist.length} établissement${withDist.length>1?"s":""} dans ${radiusKm} km`);
-  renderList({ items: withDist, ipsMap, markersByUai, map });
-  // centre
-  fitToMarkers(map, withDist.concat([{lat:geo.lat,lon:geo.lon}]));
+  setCount(`${feats.length} établissement${feats.length > 1 ? "s" : ""} dans ${radiusKm} km`);
+  renderList({ items: feats, ipsMap: Store.ipsMap, markersByUai, map });
+  fitToMarkers(map, feats.concat([{ lat, lon }]));
+  src.openPopup();
 }
 
-/* Contrôleur */
-async function runSearch(){
+// ---------------- Contrôleur ----------------
+async function runSearch() {
+  const q = document.getElementById("addr").value.trim();
+  const radiusKm = parseFloat(document.getElementById("radiusKm").value);
+  const sectorFilter = document.getElementById("secteur").value;
+  const typesSel = Array.from(document.getElementById("types").selectedOptions).map((o) => o.value);
+  const typesWanted = new Set(typesSel.length ? typesSel : ["ecole", "college", "lycee"]);
+  if (!q) { showErr("Saisis une adresse, une ville, un code postal ou un département"); return; }
+
   clearErr();
-  const q = document.getElementById('addr').value.trim();
-  const radiusKm = parseFloat(document.getElementById('radiusKm').value);
-  const sector = document.getElementById('secteur').value;
-  const typesSel = Array.from(document.getElementById('types').selectedOptions).map(o => o.value);
-  const typesWanted = new Set(typesSel.length?typesSel:["ecole","college","lycee"]);
-  if (!q){ showErr("Saisis un département, une ville, un code postal ou une adresse."); return; }
+  const btn = document.getElementById("go");
+  btn.disabled = true;
+  setCount("Chargement…");
 
-  const looksDept = isDeptCode(q);
-  if (looksDept) await runDept(q.toUpperCase(), sector, typesWanted);
-  else await runAround(q, radiusKm, sector, typesWanted);
+  try {
+    // Département → top 10
+    const looksLikeDept = isDeptCode(q);
+    if (looksLikeDept) {
+      await runDeptRanking(q, sectorFilter, typesWanted);
+    } else {
+      // Ville / CP / Adresse → autour
+      await runAround(q, radiusKm, sectorFilter, typesWanted);
+    }
+  } catch (e) {
+    console.error(e);
+    showErr("Erreur : " + (e?.message || e));
+  } finally {
+    btn.disabled = false;
+  }
 }
 
-/* Boot */
-(async function(){
-  await Store.load();
-  document.getElementById('go').addEventListener('click', runSearch);
-  document.getElementById('addr').addEventListener('keydown', e=>{ if(e.key==="Enter") runSearch(); });
-  console.info("App prête — données locales chargées.");
+// ---------------- Boot ----------------
+(async () => {
+  try {
+    await Store.load();
+    // Bind UI
+    document.getElementById("go").addEventListener("click", runSearch);
+    document.getElementById("addr").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") runSearch();
+    });
+    console.log("IPS Map — v9 (local)");
+  } catch (e) {
+    console.error(e);
+    showErr("Impossible de charger les données locales.");
+  }
 })();

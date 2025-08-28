@@ -6,22 +6,30 @@ const Store = {
   establishments: [],        // {uai,type,secteur,lat,lon,dep,cp?,commune,name}
   ipsMap: new Map(),         // uai -> ips
   byDept: new Map(),         // dep -> [establishments]
-  byCP: new Map(),           // cp -> [establishments] (si présent dans les données)
-  gazetteer: [],             // {name, dep?, cps[], lat, lon}
+  byCP: new Map(),           // cp -> [establishments] (si présent)
+  gazetteer: [],             // {name, cps[], lat, lon, dep?}
 
   async load(){
-    // ⬇️ Ajoute le cache-busting v=7 sur les 3 JSON
+    // 🔁 bump de version pour casser le cache si besoin
     const [est, ips, gaz] = await Promise.all([
-      fetch("./data/establishments.min.json?v=7").then(r=>r.json()),
-      fetch("./data/ips.min.json?v=7").then(r=>r.json()),
-      fetch("./data/gazetteer.min.json?v=7").then(r=>r.json()),
+      fetch("./data/establishments.min.json?v=8").then(r=>r.json()),
+      fetch("./data/ips.min.json?v=8").then(r=>r.json()),
+      fetch("./data/gazetteer.min.json?v=8").then(r=>r.json()),
     ]);
 
     this.establishments = est;
     this.ipsMap = new Map(Object.entries(ips).map(([k,v])=>[k, Number(v)]));
-    this.gazetteer = gaz;
 
-    // Index par département / code postal (si dispo)
+    // 🔧 NORMALISATION gazetteer : supporte {name,cps} OU {n,cp}
+    this.gazetteer = (gaz || []).map(x => ({
+      name: x.name ?? x.n ?? "",
+      cps: Array.isArray(x.cps) ? x.cps : (Array.isArray(x.cp) ? x.cp : []),
+      lat: Number(x.lat ?? (x.centre?.coordinates?.[1])),
+      lon: Number(x.lon ?? (x.centre?.coordinates?.[0])),
+      dep: x.dep ?? ""
+    })).filter(x => x.name && Number.isFinite(x.lat) && Number.isFinite(x.lon));
+
+    // Index par département / cp (si e.cp dispo)
     for (const e of est){
       const dep = String(e.dep || "").toUpperCase();
       if (dep){
