@@ -1,162 +1,243 @@
 #!/usr/bin/env python3
-import os, json, math, time, sys
-import urllib.request, urllib.parse
+# -*- coding: utf-8 -*-
 
-BASE_V21 = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/"
-DS_GEO   = "fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre"
+"""
+Build statique pour ips-map (version v7 stable)
+- Établissements géolocalisés: API v1 + refine par département, pagination
+- IPS: exports v2.1 (complets)
+- Gazetteer: geo.api.gouv.fr (centres des communes)
+"""
+
+import json, sys, time, urllib.parse, urllib.request
+
+BASE_V1  = "https://data.education.gouv.fr/api/records/1.0/search/"
+BASE_V21 = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets"
+
+HEADERS  = {"User-Agent":"ips-map build v7", "Accept":"application/json"}
+
+# Jeux
+DS_GEOLOC = "fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre"
 DS_IPS = {
-  "ecole":   "fr-en-ips-ecoles-ap2022",
-  "college": "fr-en-ips-colleges-ap2023",
-  "lycee":   "fr-en-ips-lycees-ap2023"
+    "ecole":   "fr-en-ips-ecoles-ap2022",
+    "college": "fr-en-ips-colleges-ap2023",
+    "lycee":   "fr-en-ips-lycees-ap2023",
 }
 
-OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
-os.makedirs(OUT_DIR, exist_ok=True)
+# Sorties
+OUT_ESTABS = "data/establishments.min.json"
+OUT_IPS    = "data/ips.min.json"
+OUT_GAZ    = "data/gazetteer.min.json"
 
-def fetch_json(url):
-  with urllib.request.urlopen(url) as r:
-    return json.loads(r.read().decode("utf-8"))
+# Départements (métropole + Corse + DOM principaux)
+DEPS = [f"{i:02d}" for i in range(1, 96)] + ["2A","2B","971","972","973","974","976"]
 
-def paged_fetch(dataset, select="*", where=None, limit=10000):
-  out = []
-  offset = 0
-  while True:
-    params = {"select": select, "limit": str(limit), "offset": str(offset)}
-    if where:
-      params["where"] = where
-    url = BASE_V21 + dataset + "/records?" + urllib.parse.urlencode(params, safe="()*=,. '")
-    js = fetch_json(url)
-    rows = js.get("results", [])
-    out.extend(rows)
-    if len(rows) < limit: break
-    offset += limit
-    time.sleep(0.2)
-  return out
+def http_json(url):
+    req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req) as r:
+        return json.loads(r.read().decode("utf-8"))
 
-def norm_type(fields):
-  v = (fields.get("libelles_nature") or fields.get("nature_uai_libe") or "").upper()
-  if "LYCEE" in v: return "lycee"
-  if "COLLEGE" in v: return "college"
-  if "ECOLE" in v: return "ecole"
-  # piste 2 : appellation
-  w = (fields.get("appellation_officielle") or fields.get("denomination_principale") or "").upper()
-  if "LYC" in w: return "lycee"
-  if "COLL" in w: return "college"
-  if "ECOLE" in w or "MATERNELLE" in w or "ELEMENTAIRE" in w: return "ecole"
-  return None
+# ----------------- ÉTABLISSEMENTS via API v1 + refine + pagination -----------------
+def fetch_geoloc_dep(dep_code, rows_per_page=1000, sleep=0.08):
+    """
+    Récupère TOUTES les lignes géolocalisées d'un département via API v1:
+    - Essaye refine.code_du_departement=dep_code ; si 0 résultat, essaye refine.code_departement=dep_code
+    - Pagine avec start=0,1000,2000,... jusqu'à records==0
+    Retourne la liste des 'fields'.
+    """
+    results = []
+    for field in ("code_du_departement", "code_departement"):
+        start = 0
+        count_for_field = 0
+        while True:
+            params = {
+                "dataset": DS_GEOLOC,
+                "rows": str(rows_per_page),
+                "start": str(start),
+                f"refine.{field}": dep_code,
+            }
+            # on ajoute quelques facets pour stabiliser le mapping des champs (facultatif)
+            for fac in ("secteur","libelles_nature","nature_uai_libe"):
+                params.setdefault("facet", fac)
+            qs = urllib.parse.urlencode(params, doseq=True, quote_via=urllib.parse.quote)
+            url = f"{BASE_V1}?{qs}"
+            try:
+                js = http_json(url)
+            except Exception:
+                # réseau: on sort de ce field
+                break
+            recs = js.get("records", []) or []
+            if not recs:
+                break
+            for rec in recs:
+                f = rec.get("fields", {})
+                if f:
+                    results.append(f)
+                    count_for_field += 1
+            start += rows_per_page
+            time.sleep(sleep)
+        if count_for_field:
+            print(f"  • Département {dep_code} via {field}: {count_for_field} lignes")
+            return results
+    print(f"  ! Département {dep_code}: 0 lignes (aucune variante de champ)")
+    return results
 
-def norm_secteur(fields):
-  s = (fields.get("secteur") or fields.get("secteur_public_prive") or "").lower()
-  if s.startswith("pub") or s=="pu": return "Public"
-  if s.startswith("priv") or s=="pr": return "Privé"
-  t = (fields.get("secteur_prive_libelle_type_contrat") or "").lower()
-  if t: return "Privé"
-  return "—"
+def extract_latlon(f):
+    """
+    Décode lat/lon à partir de divers formats.
+    - dict {lat,lon}
+    - array [lon,lat] (ODS) ou [lat,lon] → on détecte.
+    """
+    def try_array(a):
+        if not (isinstance(a, (list, tuple)) and len(a) >= 2):
+            return None, None
+        x, y = float(a[0]), float(a[1])
+        # si x ressemble à lon (-180..180) et y à lat (-90..90) → (lat,lon)=(y,x)
+        if -180.0 <= x <= 180.0 and -90.0 <= y <= 90.0:
+            return y, x
+        # sinon inverse
+        if -90.0 <= x <= 90.0 and -180.0 <= y <= 180.0:
+            return x, y
+        return None, None
 
-def as_float(x):
-  try: return float(x)
-  except: return None
+    for k in ("wgs84","geo_point_2d","geopoint","geolocalisation","position","coordonnees"):
+        v = f.get(k)
+        if isinstance(v, dict) and "lat" in v and "lon" in v:
+            try:
+                return float(v["lat"]), float(v["lon"])
+            except: pass
+        if isinstance(v, (list, tuple)):
+            lt, ln = try_array(v)
+            if lt is not None and ln is not None:
+                return lt, ln
+    return None, None
+
+def detect_type(f):
+    lib = (f.get("libelles_nature")
+           or f.get("nature_uai_libe")
+           or f.get("nature_uai_libelle")
+           or f.get("nature_uai_lib")
+           or "")
+    u = str(lib).upper()
+    if "ECOLE" in u or "ÉCOLE" in u: return "ecole"
+    if "COLLEGE" in u or "COLLÈGE" in u: return "college"
+    if "LYCEE" in u or "LYCÉE" in u: return "lycee"
+    code_nat = str(f.get("nature_uai","")).strip()
+    if code_nat.isdigit():
+        n = int(code_nat)
+        if 100 <= n <= 199: return "ecole"
+        if 300 <= n <= 399: return "lycee" if n >= 350 else "college"
+    return None
+
+def norm_secteur(f):
+    s = (f.get("secteur") or f.get("secteur_public_prive") or f.get("statut_public_prive") or "").lower()
+    if s.startswith("pub") or s == "pu": return "Public"
+    if s.startswith("priv") or s == "pr": return "Privé"
+    t = (f.get("secteur_prive_libelle_type_contrat") or "").lower()
+    if t: return "Privé"
+    return "—"
 
 def build_establishments():
-  print("Télécharge annuaire géolocalisé…", file=sys.stderr)
-  rows = paged_fetch(DS_GEO, select="*")
-  out = []
-  for f in rows:
-    lat = None; lon = None
-    # différents champs possibles
-    if isinstance(f.get("wgs84"), dict):
-      lat = as_float(f["wgs84"].get("lat")); lon = as_float(f["wgs84"].get("lon"))
-    if (lat is None or lon is None) and isinstance(f.get("geo_point_2d"), dict):
-      lat = as_float(f["geo_point_2d"].get("lat")); lon = as_float(f["geo_point_2d"].get("lon"))
-    if (lat is None or lon is None) and isinstance(f.get("geopoint"), dict):
-      lat = as_float(f["geopoint"].get("lat")); lon = as_float(f["geopoint"].get("lon"))
-    if lat is None or lon is None: continue
+    print("Établissements géolocalisés (API v1 + refine + pagination)")
+    all_fields = []
+    for dep in DEPS:
+        all_fields.extend(fetch_geoloc_dep(dep))
 
-    uai = f.get("numero_uai") or f.get("uai") or f.get("code_uai")
-    if not uai: continue
+    out = []
+    seen = set()
+    for f in all_fields:
+        uai = f.get("numero_uai") or f.get("uai") or f.get("code_uai")
+        if not uai or uai in seen:
+            continue
+        etype = detect_type(f)
+        if etype not in ("ecole","college","lycee"):
+            continue
+        lat, lon = extract_latlon(f)
+        if lat is None or lon is None:
+            continue
+        name = (f.get("appellation_officielle")
+                or f.get("nom_etablissement")
+                or f.get("nom_de_l_etablissement")
+                or f.get("denomination_principale")
+                or "Établissement")
+        commune = (f.get("libelle_commune")
+                   or f.get("nom_de_la_commune")
+                   or f.get("commune")
+                   or f.get("nom_commune")
+                   or "")
+        dep = (f.get("code_departement")
+               or f.get("code_du_departement")
+               or "")
+        out.append({
+            "uai": uai,
+            "type": etype,
+            "name": name,
+            "commune": commune,
+            "secteur": norm_secteur(f),
+            "dep": str(dep),
+            "lat": round(lat,6),
+            "lon": round(lon,6),
+        })
+        seen.add(uai)
 
-    dep = f.get("code_du_departement") or f.get("code_departement")
-    cp  = f.get("code_postal_uai") or f.get("code_postal") or f.get("adresse_code_postal")
-    com = f.get("nom_de_la_commune") or f.get("commune") or f.get("libelle_commune")
-    name = f.get("appellation_officielle") or f.get("nom_etablissement") or f.get("nom_de_l_etablissement") or f.get("denomination_principale") or "Établissement"
-    typ = norm_type(f)
-    sect = norm_secteur(f)
+    with open(OUT_ESTABS, "w", encoding="utf-8") as w:
+        json.dump(out, w, ensure_ascii=False, separators=(",",":"))
+    print(f"OK: {OUT_ESTABS} ({len(out)} établissements)")
 
-    if not typ: continue
-    out.append({
-      "uai": uai, "type": typ, "secteur": sect,
-      "lat": lat, "lon": lon,
-      "dep": str(dep) if dep is not None else "",
-      "cp": str(cp) if cp is not None else "",
-      "commune": com or "",
-      "name": name
-    })
-
-  out_path = os.path.join(OUT_DIR, "establishments.min.json")
-  with open(out_path, "w", encoding="utf-8") as w:
-    json.dump(out, w, ensure_ascii=False, separators=(",",":"))
-  print(f"OK: {out_path} ({len(out)} établissements)", file=sys.stderr)
+# ----------------- IPS via export v2.1 -----------------
+def export_json_url(dataset):
+    return f"{BASE_V21}/{dataset}/exports/json"
 
 def build_ips():
-  ips_map = {}
-  for key, ds in DS_IPS.items():
-    print(f"Télécharge IPS {key}…", file=sys.stderr)
-    rows = paged_fetch(ds, select="*")
-    # garde la dernière rentrée (si champ dispo)
-    # sinon, prend tout (dans ces jeux il n’y a qu’une année)
-    best_year = None
-    for r in rows:
-      y = r.get("rentree_scolaire") or r.get("annee_scolaire") or r.get("annee")
-      try:
-        y = int(y)
-        if best_year is None or y>best_year: best_year=y
-      except: pass
-    for r in rows:
-      y = r.get("rentree_scolaire") or r.get("annee_scolaire") or r.get("annee")
-      if best_year and y and str(y)!=str(best_year): continue
-      uai = r.get("uai") or r.get("code_uai")
-      ips = r.get("ips") or r.get("indice_position_sociale") or r.get("indice") or r.get("ips_moyen")
-      if not uai: continue
-      try:
-        ips_map[uai] = float(ips)
-      except:
-        pass
+    print("IPS (exports v2.1)")
+    ips = {}
+    for key, ds in DS_IPS.items():
+        print(f"  • {key}")
+        arr = http_json(export_json_url(ds))   # <-- on récupère déjà du JSON parsé
+        if isinstance(arr, dict) and "results" in arr:
+            # par sécurité : certains exports renvoient 'results'
+            arr = arr.get("results", [])
+        for row in arr:
+            uai = row.get("uai") or row.get("code_uai")
+            if not uai: continue
+            val = (row.get("ips")
+                   or row.get("indice_position_sociale")
+                   or row.get("indice"))
+            try:
+                v = None if val in (None,"") else float(val)
+            except:
+                v = None
+            if v is not None:
+                ips[uai] = round(v,1)
+        time.sleep(0.12)
 
-  out_path = os.path.join(OUT_DIR, "ips.min.json")
-  with open(out_path, "w", encoding="utf-8") as w:
-    json.dump(ips_map, w, ensure_ascii=False, separators=(",",":"))
-  print(f"OK: {out_path} ({len(ips_map)} UAI avec IPS)", file=sys.stderr)
+    with open(OUT_IPS, "w", encoding="utf-8") as w:
+        json.dump(ips, w, ensure_ascii=False, separators=(",",":"))
+    print(f"OK: {OUT_IPS} ({len(ips)} UAI avec IPS)")
 
+# ----------------- Gazetteer -----------------
 def build_gazetteer():
-  print("Télécharge gazetteer communes…", file=sys.stderr)
-  url = "https://geo.api.gouv.fr/communes?fields=centre,nom,code,codesPostaux,departement&format=json&geometry=centre&limit=50000"
-  arr = fetch_json(url)
-  out = []
-  for c in arr:
-    cps = c.get("codesPostaux") or []
-    ctr = c.get("centre") or {}
-    coords = ctr.get("coordinates") or []
-    if len(coords)>=2:
-      lon,lat = coords[0], coords[1]
-    else:
-      lat=lon=None
-    dep = ""
-    if isinstance(c.get("departement"), dict):
-      dep = c["departement"].get("code","")
-    out.append({
-      "name": c.get("nom",""),
-      "dep": dep,
-      "cps": cps,
-      "lat": lat,
-      "lon": lon
-    })
-  out_path = os.path.join(OUT_DIR, "gazetteer.min.json")
-  with open(out_path, "w", encoding="utf-8") as w:
-    json.dump(out, w, ensure_ascii=False, separators=(",",":"))
-  print(f"OK: {out_path} ({len(out)} communes)", file=sys.stderr)
+    print("Gazetteer communes…")
+    url = "https://geo.api.gouv.fr/communes?fields=nom,centre,codesPostaux&format=json&geometry=centre"
+    arr = http_json(url)
+    out = []
+    for c in arr:
+        nom = c.get("nom")
+        cp  = c.get("codesPostaux") or []
+        cen = (c.get("centre") or {}).get("coordinates")
+        if nom and isinstance(cen, list) and len(cen) == 2:
+            lon, lat = float(cen[0]), float(cen[1])
+            out.append({"n": nom, "cp": cp[:3], "lat": round(lat,6), "lon": round(lon,6)})
+    with open(OUT_GAZ, "w", encoding="utf-8") as w:
+        json.dump(out, w, ensure_ascii=False, separators=(",",":"))
+    print(f"OK: {OUT_GAZ} ({len(out)} communes)")
 
-if __name__=="__main__":
-  build_establishments()
-  build_ips()
-  build_gazetteer()
-  print("Terminé.", file=sys.stderr)
+# ----------------- MAIN -----------------
+if __name__ == "__main__":
+    try:
+        build_establishments()
+        build_ips()
+        build_gazetteer()
+        print("Terminé.")
+    except Exception as e:
+        print("[ERREUR]", e)
+        sys.exit(1)
