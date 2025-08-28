@@ -1,27 +1,33 @@
+// js/store.js
 import { strip } from "./util.js";
 
 const Store = {
   ready: false,
-  establishments: [],        // {uai,type,secteur,lat,lon,dep,cp,commune,name}
+  establishments: [],        // {uai,type,secteur,lat,lon,dep,cp?,commune,name}
   ipsMap: new Map(),         // uai -> ips
   byDept: new Map(),         // dep -> [establishments]
-  byCP: new Map(),           // cp -> [establishments]
-  gazetteer: [],             // {name, dep, cps[], lat, lon}
+  byCP: new Map(),           // cp -> [establishments] (si présent dans les données)
+  gazetteer: [],             // {name, dep?, cps[], lat, lon}
 
   async load(){
+    // ⬇️ Ajoute le cache-busting v=7 sur les 3 JSON
     const [est, ips, gaz] = await Promise.all([
-      fetch("./data/establishments.min.json").then(r=>r.json()),
-      fetch("./data/ips.min.json").then(r=>r.json()),
-      fetch("./data/gazetteer.min.json").then(r=>r.json()),
+      fetch("./data/establishments.min.json?v=7").then(r=>r.json()),
+      fetch("./data/ips.min.json?v=7").then(r=>r.json()),
+      fetch("./data/gazetteer.min.json?v=7").then(r=>r.json()),
     ]);
+
     this.establishments = est;
     this.ipsMap = new Map(Object.entries(ips).map(([k,v])=>[k, Number(v)]));
     this.gazetteer = gaz;
 
-    // indexes
+    // Index par département / code postal (si dispo)
     for (const e of est){
-      if (!this.byDept.has(e.dep)) this.byDept.set(e.dep, []);
-      this.byDept.get(e.dep).push(e);
+      const dep = String(e.dep || "").toUpperCase();
+      if (dep){
+        if (!this.byDept.has(dep)) this.byDept.set(dep, []);
+        this.byDept.get(dep).push(e);
+      }
       if (e.cp){
         if (!this.byCP.has(e.cp)) this.byCP.set(e.cp, []);
         this.byCP.get(e.cp).push(e);
@@ -41,11 +47,12 @@ const Store = {
     const out = { ecole:[], college:[], lycee:[] };
     for (const t of ["ecole","college","lycee"]){
       if (!typesWanted.has(t)) continue;
-      const list = all.filter(e => e.type===t && (sector==="all" || e.secteur===sector))
-                      .map(e => ({ ...e, ips: this.ipsMap.get(e.uai) }))
-                      .filter(e => e.ips!=null)
-                      .sort((a,b)=>b.ips-a.ips)
-                      .slice(0,10);
+      const list = all
+        .filter(e => e.type===t && (sector==="all" || e.secteur===sector))
+        .map(e => ({ ...e, ips: this.ipsMap.get(e.uai) }))
+        .filter(e => e.ips!=null)
+        .sort((a,b)=>b.ips-a.ips)
+        .slice(0,10);
       out[t] = list;
     }
     return out;
