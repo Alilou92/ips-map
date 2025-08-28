@@ -1,35 +1,64 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>IPS Map – Trouver les écoles autour d'une adresse</title>
-  <link rel="stylesheet" href="./assets/style.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>IPS Map</title>
+  <link rel="stylesheet" href="./assets/style.css">
+  <link rel="icon" type="image/svg+xml"
+    href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%230f1320"/><text x="50%" y="52%" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="28" fill="%234ea1ff">IPS</text></svg>'>
+
+  <!-- Leaflet (CDN fiable) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
-<body class="home">
-  <header class="hero">
-    <div class="container">
-      <span class="pill">🎒 IPS Map — Écoles, collèges, lycées</span>
-      <h1>Visualisez l’<em>IPS</em> des établissements près d’un futur logement</h1>
-      <p class="lead">
-        Tapez une adresse pour voir les établissements à proximité (avec leur <strong>IPS</strong> si publié),
-        ou bien saisissez un <strong>département</strong> (ex. <em>94</em>, <em>2A</em>, <em>Val-de-Marne</em>)
-        pour afficher le <strong>Top&nbsp;10</strong> des IPS par niveau.
-      </p>
-      <a class="cta" href="./app.html">🚀 Lancer la carte</a>
-      <div class="sources card">
-        <h3>Données & mentions</h3>
-        <ul>
-          <li>Annuaire géolocalisé des établissements (UAI, coordonnées, secteur) — Éducation nationale (open data).</li>
-          <li>Indice de Position Sociale (IPS) — DEPP (rentrées scolaires récentes).</li>
-          <li>Carte : OpenStreetMap + Leaflet.</li>
-        </ul>
-        <p class="note">L’IPS est un indicateur statistique moyen. À utiliser avec d’autres critères (projet d’établissement, options, transports, etc.).</p>
+<body>
+  <div class="top">
+    <strong>IPS Map</strong>
+    <input id="addr" type="text" size="38" placeholder="Adresse, code postal (ex. 94700), ville, ou code dép. (ex. 94)"/>
+    <label>Rayon
+      <select id="radiusKm">
+        <option value="1">1 km</option>
+        <option value="2" selected>2 km</option>
+        <option value="3">3 km</option>
+      </select>
+    </label>
+    <label>Types
+      <select id="types" multiple size="3">
+        <option value="ecole" selected>École</option>
+        <option value="college" selected>Collège</option>
+        <option value="lycee" selected>Lycée</option>
+      </select>
+    </label>
+    <label>Secteur
+      <select id="secteur">
+        <option value="all" selected>Tous</option>
+        <option value="Public">Public</option>
+        <option value="Privé">Privé</option>
+      </select>
+    </label>
+    <button id="go">Chercher</button>
+    <span class="hint">Astuce : Ctrl/Cmd+clic pour (dé)sélection multiple</span>
+  </div>
+
+  <div id="err" class="banner" role="status" aria-live="polite"></div>
+
+  <div class="wrap">
+    <aside id="sidebar">
+      <div class="h">
+        <div class="title">Résultats</div>
+        <div class="small" id="count">—</div>
       </div>
-    </div>
-  </header>
-  <footer class="footer">
-    <div class="container">© 2025 – Projet libre et gratuit. Hébergeable sur GitHub Pages / Netlify / Vercel.</div>
-  </footer>
+      <div class="list" id="list"></div>
+      <div class="note">
+        <div>• Gris = IPS non publié. Seuils indicatifs : &lt;90 défavorisé • 90–110 moyen • &gt;110 favorisé.</div>
+        <div>• Tape <em>un département</em> (ex. “94”) pour voir le Top 10.</div>
+      </div>
+      <div class="footer">Sources : MENJ (annuaire, IPS) • Carte © OSM — Leaflet.</div>
+    </aside>
+    <main id="map"></main>
+  </div>
+
+  <script type="module" src="./js/app.js"></script>
 </body>
 </html>
