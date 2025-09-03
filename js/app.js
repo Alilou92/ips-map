@@ -1,4 +1,4 @@
-// js/app.js — recherche + filtres + stations IDFM
+// js/app.js — recherche + filtres + stations IDFM/SNCF
 import Store from "./store.js?v=23";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=2";
 import { geocode } from "./geocode.js?v=2";
@@ -32,10 +32,11 @@ let addrCircle = null;
 let addrLat = null, addrLon = null;
 let lastRadiusMeters = 0;
 
-/* cases à cocher pour les modes */
+/* cases à cocher pour les modes (corrigé : ajout tram, activation ter/tgv) */
 const MODE_IDS = {
   metro: "st_metro",
   rer: "st_rer",
+  tram: "st_tram",            // ✅ nouveau
   transilien: "st_transilien",
   ter: "st_ter",
   tgv: "st_tgv",
@@ -59,7 +60,7 @@ function refreshStations(){
   });
 }
 
-/* dept top 10 */
+/* dept top 10 — (inchangé, on ne touche pas à la partie écoles) */
 async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   const dep = normDept(depInput);
   if (!Store.ready) await Store.load();
@@ -120,7 +121,7 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   else showErr("Top 10 listé (peu de coordonnées disponibles pour la carte).");
 }
 
-/* autour d’une adresse */
+/* autour d’une adresse — (inchangé) */
 async function runAround(q, radiusKm, sectorFilter, typesWanted){
   if (!Store.ready) await Store.load();
 
@@ -192,7 +193,7 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
   });
 }
 
-/* contrôleur */
+/* contrôleur — (inchangé) */
 async function runSearch(){
   clearErr();
   const q = document.getElementById('addr').value.trim();
@@ -219,7 +220,7 @@ async function runSearch(){
   }
 }
 
-/* bind */
+/* bind (inchangé) */
 document.getElementById('go').addEventListener('click', runSearch);
 document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
 document.getElementById('secteur').addEventListener('change', runSearch);
