@@ -21,11 +21,19 @@ export function markerFor(f, ipsMap){
   const icon = L.divIcon({ className:'est', html:`<div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 1px ${color}"></div>` });
   const m = L.marker([f.lat,f.lon],{icon});
   const ipsTxt = ips!=null ? Number(ips).toFixed(1) : "—";
-  m.bindPopup(`<strong>${f.name||"Établissement"}</strong><div>${f.type||"?"} — ${f.commune||""}</div><div>UAI : ${f.uai}</div><div>IPS : ${ipsTxt}</div>`);
+  const typeHuman = (f.type||"?").replace("ecole","École").replace("college","Collège").replace("lycee","Lycée");
+  m.bindPopup(
+    `<strong>${f.name||"Établissement"}</strong>
+     <div>${typeHuman} — ${f.commune||""}</div>
+     <div>Secteur : ${f.secteur || "—"}</div>
+     <div>UAI : ${f.uai}</div>
+     <div>IPS : ${ipsTxt}</div>`
+  );
   return m;
 }
 
 export function fitToMarkers(map, items){
-  const bounds = L.latLngBounds(items.map(i => [i.lat,i.lon]));
+  const pts = items.map(i => [i.lat,i.lon]).filter(x => Array.isArray(x) && x.length===2);
+  const bounds = L.latLngBounds(pts);
   if (bounds.isValid()) map.fitBounds(bounds.pad(0.2));
 }

@@ -1,5 +1,9 @@
+/* assets/style.css */
+
+/* ——— Thème général (garde ce que tu avais déjà) ——— */
 :root{--bg:#0b0d12;--panel:#131722;--muted:#7f8ca3;--acc:#4ea1ff;--ok:#10b981;--bad:#ef4444}
-*{box-sizing:border-box} body{margin:0;background:#0b0d12;color:#e5ecf6;font:14px/1.45 system-ui,Segoe UI,Roboto,Arial}
+*{box-sizing:border-box}
+body{margin:0;background:#0b0d12;color:#e5ecf6;font:14px/1.45 system-ui,Segoe UI,Roboto,Arial}
 .top{display:flex;gap:10px;align-items:center;padding:8px 12px;background:#0f1320;border-bottom:1px solid #1e2637;position:sticky;top:0;z-index:9}
 .top strong{font-weight:700}
 .top input,.top select,.top button{background:#0d1320;color:#e5ecf6;border:1px solid #243149;border-radius:8px;padding:8px 10px}
@@ -20,3 +24,82 @@
 .note,.footer{color:#7f8ca3;font-size:12px;margin-top:10px}
 .legend{position:fixed;right:12px;bottom:12px;background:#0f1320;border:1px solid #243149;border-radius:12px;padding:10px 12px;color:#a9b8d6}
 .src-pin{width:26px;height:26px;border-radius:50%;background:#ffd500;color:#000;display:flex;align-items:center;justify-content:center;font-weight:700;border:2px solid #111}
+
+/* ——— Ajouts pour l’icône / popup / puces secteur ——— */
+.est-dot{
+  width:16px;height:16px;border-radius:50%;
+  border:2px solid #fff;
+}
+
+.popup-title{
+  font-weight:600;
+  margin-bottom:4px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.popup-meta{ opacity:.85; margin-bottom:6px; }
+.popup-rows > div{ margin:2px 0; }
+
+/* Chips Public / Privé */
+.chip{
+  display:inline-block;
+  padding:2px 8px;
+  border-radius:999px;
+  font-size:12px;
+  line-height:1.2;
+  background:#444;
+  color:#fff;
+}
+.chip-public{ background:#1b7f36; } /* vert */
+.chip-prive{  background:#6f42c1; } /* violet */
+
+/* --- stations --- */
+.stn { pointer-events: auto; }
+.stn .stn-dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid #0f1320; background: #fff;
+  box-shadow: 0 0 0 2px rgba(0,0,0,.15);
+}
+.stn-metro .stn-dot { background: #ffffff; border-color: #1E90FF; }     /* bleu M */
+.stn-rer   .stn-dot { background: #ffffff; border-color: #111; }        /* noir RER */
+.stn-transilien .stn-dot { background: #ffffff; border-color: #2c8b2c; }/* vert */
+.stn-ter   .stn-dot { background: #ffffff; border-color: #8a5; }
+.stn-tgv   .stn-dot { background: #ffffff; border-color: #b03a9b; }
+
+.station-tt { display:flex; align-items:center; gap:.5rem; }
+.station-badge{
+  display:inline-block; min-width:1.8em; padding:.15em .45em;
+  border-radius:1em; color:#fff; font-weight:700; font-size:.85em; text-align:center;
+}
+/* ──────────────────────────────────────────────────────────────
+   Stations (tooltips / badges)
+   ──────────────────────────────────────────────────────────── */
+.station-tt {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  line-height: 1.2;
+}
+.station-badge {
+  display: inline-block;
+  min-width: 1.8em;
+  padding: .15em .45em;
+  border-radius: 1em;
+  color: #fff;
+  font-weight: 700;
+  font-size: .85em;
+  text-align: center;
+}
+.station-name { font-weight: 500; }
+
+/* (optionnel) rendre les tooltips Leaflet plus propres */
+.leaflet-tooltip {
+  background: rgba(0,0,0,.80);
+  color: #fff;
+  border: 0;
+  border-radius: 4px;
+  padding: 6px 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}

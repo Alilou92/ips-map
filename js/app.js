@@ -1,132 +1,130 @@
-// js/app.js (v=9 - data locales + gardes)
-import Store from "./store.js";
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js";
-import { strip, distanceMeters, isDeptCode } from "./util.js";
-import { renderList, setCount, showErr } from "./ui.js";
+// js/app.js — recherche + filtres + stations IDFM
+import Store from "./store.js?v=23";
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=2";
+import { geocode } from "./geocode.js?v=2";
+import { renderList, setCount, showErr } from "./ui.js?v=2";
+import { makeStationsController } from "./stations.js?v=6";
 
-// ---- init ----
+/* helpers */
+function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }
+const DEPT_RE = /^(?:0?[1-9]|[1-8]\d|9[0-5]|2A|2B|97[1-6])$/i;
+const looksLikeDept = (q) => DEPT_RE.test(String(q).trim());
+function normDept(q){
+  let s = String(q).trim().toUpperCase();
+  if (s === "2A" || s === "2B") return s;
+  if (/^\d{1,2}$/.test(s)) return s.padStart(2,"0");
+  if (/^97[1-6]$/.test(s)) return s;
+  return s;
+}
+function normalizeSectorFromSelect(raw){
+  const s = String(raw||"").normalize("NFKD").replace(/\p{Diacritic}/gu,"").toLowerCase().trim();
+  if (!s || raw === "all") return "all";
+  if (s.startsWith("pub")) return "Public";
+  if (s.startsWith("pri")) return "Privé";
+  return "all";
+}
+
+/* map + stations controller */
 const { map, markersLayer } = initMap();
+const Stations = makeStationsController({ map });
+
 let addrCircle = null;
 let addrLat = null, addrLon = null;
+let lastRadiusMeters = 0;
 
-// Helpers
-function clearErr() {
-  const el = document.getElementById("err");
-  if (el) el.textContent = "";
-}
-const isPostcode = (s) => /^\d{5}$/.test(String(s).trim());
-
-// ---------------- Geocode (local d’abord, puis BAN en secours) ----------------
-async function tryBAN(query) {
-  try {
-    const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1&autocomplete=1&type=street&type=locality&type=municipality&type=postcode&type=housenumber`;
-    const r = await fetch(url, { headers: { "Accept": "application/json" } });
-    if (!r.ok) return null;
-    const js = await r.json();
-    const f = js.features?.[0];
-    const coords = f?.geometry?.coordinates;
-    if (Array.isArray(coords) && coords.length >= 2) {
-      const [lon, lat] = coords;
-      if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        const label = f.properties?.label || query;
-        return { lat, lon, label, provider: "BAN" };
-      }
-    }
-  } catch {}
-  return null;
-}
-
-/**
- * géocode “souple” :
- * - CP (5 chiffres) → cherche dans gazetteer (cps)
- * - Nom de commune → gazetteer
- * - Adresse → BAN (secours réseau)
- */
-async function geocodeLoose(q) {
-  const query = (q || "").trim();
-  if (!query) throw new Error("Adresse introuvable");
-
-  if (isPostcode(query)) {
-    const cp = query;
-    const hits = Store.gazetteer.filter(
-      (x) => Array.isArray(x.cps) && x.cps.includes(cp)
-    );
-    if (hits.length) {
-      // centre de la première commune (simple et fiable)
-      const c = hits[0];
-      return { lat: c.lat, lon: c.lon, label: `${c.name} (${cp})`, provider: "GAZ_CP" };
-    }
-    // secours BAN si CP inconnu localement
-    const b = await tryBAN(cp);
-    if (b) return b;
-    throw new Error("Code postal inconnu");
+/* cases à cocher pour les modes */
+const MODE_IDS = {
+  metro: "st_metro",
+  rer: "st_rer",
+  transilien: "st_transilien",
+  ter: "st_ter",
+  tgv: "st_tgv",
+};
+function getModesWanted(){
+  const s = new Set();
+  for (const [mode, id] of Object.entries(MODE_IDS)){
+    const el = document.getElementById(id);
+    if (el && el.checked) s.add(mode);
   }
-
-  // Commune (nom)
-  const byName = Store.findCommune(query);
-  if (byName) {
-    return { lat: byName.lat, lon: byName.lon, label: byName.name, provider: "GAZ_NAME" };
-  }
-
-  // Adresse précise → BAN
-  const b = await tryBAN(query);
-  if (b) return b;
-
-  throw new Error("Géocodage indisponible");
+  return s;
+}
+function refreshStations(){
+  // Affiche les stations uniquement si on a un centre + rayon valides
+  if (addrLat == null || addrLon == null) return;
+  if (!Number.isFinite(lastRadiusMeters) || lastRadiusMeters <= 0) return;
+  Stations.refresh({
+    modesWanted: getModesWanted(),
+    center: [addrLat, addrLon],
+    radiusMeters: lastRadiusMeters
+  });
 }
 
-// ---------------- Top 10 par département (local) ----------------
-async function runDeptRanking(q, sectorFilter, typesWanted) {
-  const depCode = String(q).toUpperCase().trim();
-  const byType = Store.top10ByDept(depCode, typesWanted, sectorFilter);
+/* dept top 10 */
+async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
+  const dep = normDept(depInput);
+  if (!Store.ready) await Store.load();
 
-  const count = document.getElementById("count");
-  const list = document.getElementById("list");
+  // pour une recherche départementale, on masque les stations
+  Stations.clear();
+  addrLat = null; addrLon = null; lastRadiusMeters = 0;
+
+  const top = Store.top10ByDept(dep, typesWanted, sectorFilter);
+
+  const count = document.getElementById('count');
+  const list  = document.getElementById('list');
   list.innerHTML = "";
-  count.textContent = `Top 10 — Département ${depCode} (${sectorFilter === "all" ? "Tous secteurs" : sectorFilter})`;
+  count.textContent = `Top 10 — Département ${dep} (${sectorFilter==="all"?"Tous secteurs":sectorFilter})`;
 
   markersLayer.clearLayers();
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
 
-  const order = ["ecole", "college", "lycee"].filter((t) => typesWanted.has(t));
-  for (const t of order) {
-    const human = t === "ecole" ? "Écoles" : t === "college" ? "Collèges" : "Lycées";
-    const arr = byType[t] || [];
+  const order = ["ecole","college","lycee"].filter(t => typesWanted.has(t));
+  let anyMarker = false;
 
-    const sec = document.createElement("div");
-    sec.innerHTML = `<div class="sectionTitle">${human} — Top 10 <span class="pill small">${depCode}</span></div>`;
+  for (const t of order){
+    const human = t==="ecole" ? "Écoles" : t==="college" ? "Collèges" : "Lycées";
+    const arr = top[t] || [];
 
-    for (let i = 0; i < arr.length; i++) {
-      const it = arr[i];
+    const sec = document.createElement('div');
+    sec.innerHTML = `<div class="sectionTitle">${human} — Top 10 <span class="pill small">${dep}</span></div>`;
 
-      const row = document.createElement("div");
+    arr.forEach((it, i) => {
+      const row = document.createElement('div');
       row.className = "item";
       row.innerHTML = `
-        <div class="name">#${i + 1} ${it.name}<span class="badge">${it.secteur || "—"}</span></div>
-        <div class="meta">${human.slice(0, -1)} — ${it.commune || ""}</div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
-          <div class="ips">IPS : ${Number(it.ips).toFixed(1)}</div>
-          <div class="dist">UAI : ${it.uai}</div>
-        </div>`;
-
-      if (it.lat && it.lon) {
-        const m = markerFor({ ...it, type: t }, new Map([[it.uai, it.ips]]));
+        <div class="name">#${i+1} ${it.name}<span class="badge">${it.secteur ?? "—"}</span></div>
+        <div class="meta">${human.slice(0,-1)} — ${it.commune || ""}</div>
+        <div class="meta">IPS : ${Number(it.ips).toFixed(1)} • UAI : ${it.uai}</div>`;
+      if (it.lat && it.lon){
+        const m = markerFor({ ...it, type:t }, new Map([[it.uai, it.ips]]));
         m.addTo(markersLayer);
-        row.addEventListener("click", () => map.setView([it.lat, it.lon], 16));
+        anyMarker = true;
+        row.addEventListener('click', ()=> map.setView([it.lat,it.lon], 16));
       }
       sec.appendChild(row);
+    });
+
+    if (!arr.length){
+      const empty = document.createElement('div');
+      empty.className = "small";
+      empty.style.margin = "6px 0 12px";
+      empty.textContent = "Aucun établissement avec IPS publié dans cette catégorie.";
+      sec.appendChild(empty);
     }
+
     list.appendChild(sec);
   }
 
-  const allWithCoords = order.flatMap((t) => byType[t] || []).filter((x) => x.lat && x.lon);
-  if (allWithCoords.length) fitToMarkers(map, allWithCoords);
+  const all = order.flatMap(t => top[t] || []).filter(x => x.lat && x.lon);
+  if (anyMarker && all.length) fitToMarkers(map, all);
   else showErr("Top 10 listé (peu de coordonnées disponibles pour la carte).");
 }
 
-// ---------------- Recherche autour d’une adresse (local) ----------------
-async function runAround(q, radiusKm, sectorFilter, typesWanted) {
-  const { lat, lon, label } = await geocodeLoose(q);
+/* autour d’une adresse */
+async function runAround(q, radiusKm, sectorFilter, typesWanted){
+  if (!Store.ready) await Store.load();
+
+  const { lat, lon, label } = await geocode(q);
   addrLat = lat; addrLon = lon;
 
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
@@ -134,68 +132,86 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted) {
 
   markersLayer.clearLayers();
 
-  // filtre dans le cache local
-  const feats = Store.establishments
-    .filter((e) => typesWanted.has(e.type))
-    .filter((e) => sectorFilter === "all" || e.secteur === sectorFilter)
-    .map((e) => {
-      const d = distanceMeters(lat, lon, e.lat, e.lon);
-      return { ...e, distance: d };
-    })
-    .filter((e) => e.distance <= radiusKm * 1000)
-    .sort((a, b) => (a.distance ?? 1e12) - (b.distance ?? 1e12));
+  let items = Store.around(lat, lon, radiusKm * 1000, sectorFilter, typesWanted);
 
-  // marqueurs
+  // élargit si vide
+  let triedKm = radiusKm;
+  if (!items.length && radiusKm < 2){
+    triedKm = 2;
+    map.removeLayer(addrCircle);
+    addrCircle = drawAddressCircle(map, lat, lon, 2000);
+    items = Store.around(lat, lon, 2000, sectorFilter, typesWanted);
+  }
+  if (!items.length && radiusKm < 3){
+    triedKm = 3;
+    map.removeLayer(addrCircle);
+    addrCircle = drawAddressCircle(map, lat, lon, 3000);
+    items = Store.around(lat, lon, 3000, sectorFilter, typesWanted);
+  }
+
+  // mémorise le rayon pour les stations
+  lastRadiusMeters = triedKm * 1000;
+
+  const src = L.marker([lat, lon], {
+    icon: L.divIcon({ className: 'src', html: '<div class="src-pin">A</div>' })
+  }).bindPopup(`<strong>Adresse/ville</strong><div>${label}</div>`).addTo(markersLayer);
+
+  if (!items.length){
+    setCount("0 établissement trouvé");
+    showErr("Aucun établissement trouvé autour de cette zone. Essaie d’augmenter le rayon.");
+    map.setView([lat, lon], triedKm >= 2 ? 13 : 15);
+
+    // même si aucun établissement, on peut afficher les stations autour
+    await Stations.ensure({
+      modesWanted: getModesWanted(),
+      center: [lat, lon],
+      radiusMeters: lastRadiusMeters
+    });
+    return;
+  }
+
   const markersByUai = new Map();
-  feats.forEach((f) => {
+  items.forEach(f => {
     const m = markerFor(f, Store.ipsMap);
     m.addTo(markersLayer);
     markersByUai.set(f.uai, m);
   });
 
-  // source A
-  const src = L.marker([lat, lon], {
-    icon: L.divIcon({ className: "src", html: '<div class="src-pin">A</div>' }),
-  }).bindPopup(`<strong>Adresse recherchée</strong><div>${label}</div>`).addTo(markersLayer);
+  items.sort((a,b)=> (a.distance??1e12) - (b.distance??1e12));
+  setCount(`${items.length} établissement${items.length>1?"s":""} dans ${triedKm} km — ${sectorFilter==="all"?"Tous secteurs":sectorFilter}`);
+  renderList({ items, ipsMap: Store.ipsMap, markersByUai, map });
 
-  if (!feats.length) {
-    setCount("0 établissement trouvé dans le rayon");
-    showErr("Aucun établissement trouvé autour de cette zone. Essaie d’élargir le rayon à 2–3 km.");
-    map.setView([lat, lon], radiusKm >= 2 ? 13 : 15);
-    src.openPopup();
-    return;
-  }
-
-  setCount(`${feats.length} établissement${feats.length > 1 ? "s" : ""} dans ${radiusKm} km`);
-  renderList({ items: feats, ipsMap: Store.ipsMap, markersByUai, map });
-  fitToMarkers(map, feats.concat([{ lat, lon }]));
+  fitToMarkers(map, items.concat([{lat, lon}]));
   src.openPopup();
+
+  // charge/rafraîchit les stations pour ce centre/rayon
+  await Stations.ensure({
+    modesWanted: getModesWanted(),
+    center: [lat, lon],
+    radiusMeters: lastRadiusMeters
+  });
 }
 
-// ---------------- Contrôleur ----------------
-async function runSearch() {
-  const q = document.getElementById("addr").value.trim();
-  const radiusKm = parseFloat(document.getElementById("radiusKm").value);
-  const sectorFilter = document.getElementById("secteur").value;
-  const typesSel = Array.from(document.getElementById("types").selectedOptions).map((o) => o.value);
-  const typesWanted = new Set(typesSel.length ? typesSel : ["ecole", "college", "lycee"]);
-  if (!q) { showErr("Saisis une adresse, une ville, un code postal ou un département"); return; }
-
+/* contrôleur */
+async function runSearch(){
   clearErr();
-  const btn = document.getElementById("go");
+  const q = document.getElementById('addr').value.trim();
+  const radiusKm = parseFloat(document.getElementById('radiusKm').value);
+  const sectorFilter = normalizeSectorFromSelect(document.getElementById('secteur').value);
+  const typesSel = Array.from(document.getElementById('types').selectedOptions).map(o => o.value);
+  const typesWanted = new Set(typesSel.length ? typesSel : ["ecole","college","lycee"]);
+  if (!q){ showErr("Saisis une adresse, une ville ou un code département"); return; }
+
+  const btn = document.getElementById('go');
   btn.disabled = true;
   setCount("Chargement…");
-
   try {
-    // Département → top 10
-    const looksLikeDept = isDeptCode(q);
-    if (looksLikeDept) {
-      await runDeptRanking(q, sectorFilter, typesWanted);
+    if (looksLikeDept(q)) {
+      await runDeptRankingLocal(q, sectorFilter, typesWanted);
     } else {
-      // Ville / CP / Adresse → autour
       await runAround(q, radiusKm, sectorFilter, typesWanted);
     }
-  } catch (e) {
+  } catch(e){
     console.error(e);
     showErr("Erreur : " + (e?.message || e));
   } finally {
@@ -203,18 +219,22 @@ async function runSearch() {
   }
 }
 
-// ---------------- Boot ----------------
-(async () => {
-  try {
-    await Store.load();
-    // Bind UI
-    document.getElementById("go").addEventListener("click", runSearch);
-    document.getElementById("addr").addEventListener("keydown", (e) => {
-      if (e.key === "Enter") runSearch();
-    });
-    console.log("IPS Map — v9 (local)");
-  } catch (e) {
-    console.error(e);
-    showErr("Impossible de charger les données locales.");
+/* bind */
+document.getElementById('go').addEventListener('click', runSearch);
+document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+document.getElementById('secteur').addEventListener('change', runSearch);
+document.getElementById('radiusKm').addEventListener('change', runSearch);
+document.getElementById('types').addEventListener('change', runSearch);
+
+// (stations) écoute les cases à cocher
+for (const id of Object.values(MODE_IDS)){
+  const el = document.getElementById(id);
+  if (el){
+    el.addEventListener('change', refreshStations);
   }
-})();
+}
+
+// précharge au besoin
+document.getElementById('addr').addEventListener('focus', async () => {
+  if (!Store.ready){ try { await Store.load(); } catch{} }
+});

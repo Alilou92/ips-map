@@ -2,74 +2,116 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>IPS Map – Application</title>
-  <link rel="stylesheet" href="./assets/style.css?v=18" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>IPS Map</title>
 
-  <!-- Leaflet (CDN) -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
+  <link rel="icon" type="image/svg+xml"
+        href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%230f1320"/><text x="50%" y="52%" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="28" fill="%234ea1ff">IPS</text></svg>'>
+
+  <link rel="stylesheet" href="./assets/style.css?v=31" />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 </head>
 <body>
-  <div class="top">
+  <noscript>
+    <div style="padding:12px;background:#ffedd5;color:#7c2d12">
+      Cette application nécessite JavaScript pour fonctionner.
+    </div>
+  </noscript>
+
+  <div class="top" role="region" aria-label="Barre de recherche">
     <strong>IPS Map</strong>
-    <input id="addr" type="text" size="38" placeholder="Adresse OU département (ex. 94, 2A, Val-de-Marne)" />
-    <label>Rayon
-      <select id="radiusKm">
-        <option value="0.8">800 m</option>
-        <option value="1.0" selected>1 km</option>
-        <option value="1.5">1,5 km</option>
-        <option value="2.0">2 km</option>
-        <option value="3.0">3 km</option>
+
+    <label for="addr" class="visually-hidden">Recherche</label>
+    <input id="addr" type="text" size="40" autocomplete="off"
+           placeholder="Adresse, ville ou code postal • ou tape un département (94, Val-de-Marne)" />
+
+    <label for="radiusKm">Rayon
+      <select id="radiusKm" aria-label="Rayon de recherche">
+        <option value="1" selected>1 km</option>
+        <option value="2">2 km</option>
+        <option value="3">3 km</option>
       </select>
     </label>
-    <label>Types
-      <select id="types" multiple size="3">
+
+    <label for="types">Types
+      <select id="types" multiple size="3" title="Ctrl/Cmd-clic pour multi"
+              aria-label="Types d'établissements">
         <option value="ecole" selected>École</option>
         <option value="college" selected>Collège</option>
         <option value="lycee" selected>Lycée</option>
       </select>
     </label>
-    <label>Secteur
-      <select id="secteur">
-        <option value="all" selected>Tous</option>
+
+    <label for="secteur">Secteur
+      <select id="secteur" aria-label="Secteur">
+        <option value="all" selected>Tous secteurs</option>
         <option value="Public">Public</option>
         <option value="Privé">Privé</option>
       </select>
     </label>
-    <button id="go">Chercher</button>
-    <span class="hint">Astuce : Ctrl/Cmd+clic pour (dé)sélection multiple</span>
+
+    <button id="go" type="button">Chercher</button>
+
+    <!-- -------- Transports -------- -->
+    <div style="display:flex; gap:10px; align-items:center; margin-left:12px">
+      <label style="display:flex;align-items:center;gap:6px">
+        <input id="st_metro" type="checkbox" checked /> Métro
+      </label>
+      <label style="display:flex;align-items:center;gap:6px">
+        <input id="st_rer" type="checkbox" checked /> RER
+      </label>
+      <label style="display:flex;align-items:center;gap:6px">
+        <input id="st_transilien" type="checkbox" /> Transilien
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;opacity:.45" title="À venir">
+        <input id="st_ter" type="checkbox" disabled /> TER
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;opacity:.45" title="À venir">
+        <input id="st_tgv" type="checkbox" disabled /> TGV
+      </label>
+    </div>
   </div>
 
   <div id="err" class="banner" role="status" aria-live="polite"></div>
 
   <div class="wrap">
-    <aside id="sidebar">
+    <aside id="sidebar" aria-label="Résultats">
       <div class="h">
         <div class="title">Résultats</div>
         <div class="small" id="count">—</div>
       </div>
       <div class="list" id="list"></div>
+
       <div class="note">
-        <div>• Pastille grise = IPS non publié. Seuils indicatifs : &lt;90 défavorisé • 90–110 moyen • &gt;110 favorisé.</div>
-        <div>• Tape un <em>département</em> (ex. “94” ou “Val-de-Marne”) pour voir le Top 10.</div>
+        <div>• Gris = IPS non publié. Seuils : &lt;90 défavorisé • 90–110 moyen • &gt;110 favorisé.</div>
+        <div>• Tape un <em>département</em> (94, “Val-de-Marne”) pour le Top 10.</div>
       </div>
-      <div class="footer">Données : Ministère Éducation (UAI, IPS) • Carte : © OpenStreetMap — Leaflet.</div>
+
+      <div class="footer">© OSM/Leaflet • Données MENJ Opendatasoft.</div>
     </aside>
-    <main id="map"></main>
+
+    <main id="map" aria-label="Carte"></main>
   </div>
 
   <div class="legend" id="legend">
-    <div><strong>IPS</strong> (indicatif) :</div>
-    <div>• &lt; 90 → plus défavorisé</div>
-    <div>• 90–110 → moyen</div>
-    <div>• &gt; 110 → plus favorisé</div>
-    <div style="margin-top:6px">Gris = IPS non publié</div>
+    <div><strong>IPS</strong></div>
+    <div>&lt; 90 → plus défavorisé</div>
+    <div>90–110 → moyen</div>
+    <div>&gt; 110 → plus favorisé</div>
+    <div style="margin-top:6px">Gris = non publié</div>
   </div>
 
-  <!-- App entrypoint (modules) -->
-  <!-- en bas de app.html -->
-<script type="module" src="./js/app.js?v=21"></script>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E📍%3C/text%3E%3C/svg%3E">
+  <script type="module" src="./js/app.js?v=2025-08-31-2"></script>
+
+  <style>
+    .visually-hidden {
+      position: absolute !important; height: 1px; width: 1px;
+      overflow: hidden; clip: rect(1px, 1px, 1px, 1px);
+      white-space: nowrap; border: 0; padding: 0; margin: -1px;
+    }
+  </style>
 </body>
 </html>
