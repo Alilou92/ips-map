@@ -103,3 +103,37 @@ body{margin:0;background:#0b0d12;color:#e5ecf6;font:14px/1.45 system-ui,Segoe UI
   padding: 6px 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
+/* Base */
+html, body { height: 100%; }
+#map { min-height: 320px; } /* fallback desktop */
+
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background: #fff;
+}
+
+/* Responsive mobile */
+@media (max-width: 768px) {
+  .wrap {
+    display: flex;
+    flex-direction: column; /* carte au-dessus, liste en dessous */
+    gap: 8px;
+  }
+
+  /* La carte prend toute la hauteur dispo (on fixera la valeur exacte via JS) */
+  #map {
+    height: auto;        /* la vraie hauteur sera injectée en ligne */
+    min-height: 50vh;    /* fallback si JS n'a pas encore tourné */
+  }
+
+  /* La liste défile si elle est trop longue */
+  #sidebar {
+    max-height: 45vh;
+    overflow: auto;
+  }
+
+  /* Optionnel : alléger l’interface */
+  .legend { display: none; }
+}
