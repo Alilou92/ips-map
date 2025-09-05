@@ -1,126 +1,233 @@
-# scripts/build_stations_json.py
-import sys, json, csv, os
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Fusionne des sources de stations (IDFM + SNCF) vers data/stations.min.json
+
+Usage:
+  python3 scripts/build_stations_json.py \
+      data/stations_source.geojson \
+      data/sncf_gares.geojson \
+      data/stations.min.json
+
+- Le(s) premier(s) fichier(s) sont les sources (GeoJSON ou JSON FeatureCollection)
+- Le dernier argument est le fichier de sortie.
+Le script tente d'inférer correctement les modes:
+  - IDFM: metro / rer / tram / transilien (déjà présents dans la source IDFM)
+  - SNCF: tgv / ter (et "intercités" classé en ter)
+"""
+
+import json, sys, os, re
 from collections import Counter
 
-def norm_mode(s: str | None):
-    s = (s or "").strip().upper()
-    # normalisation principale
-    if s.startswith("METRO") or s == "VAL": return "metro"
-    if s.startswith("RER"):                return "rer"
-    if s.startswith("TRAM"):               return "tram"
-    if s in {"TER", "INTERCITES", "INTERCITÉS", "IC"}: return "intercites"
-    if s == "TGV":                         return "tgv"
-    if s.startswith("TRAIN"):              return "transilien"  # IDF
-    # sinon on garde tel quel (sncf open data peut donner déjà ter/tgv)
-    return s.lower()
+ALLOWED_MODES = {"metro","rer","tram","transilien","ter","tgv"}
 
-def norm_line(raw, mode):
-    if raw is None: return None
-    S = str(raw).strip().upper()
-    if not S: return None
-    if mode == "metro":
-        for k in ("MÉTRO","METRO","M","LIGNE"):
-            if S.startswith(k): S = S[len(k):].strip()
-        return S.replace(" ","")
-    if mode == "rer":
-        return S.replace("RER","").strip()[:1]  # A/B/C/D/E
-    if mode == "tram":
-        S = S.replace("TRAM","T").strip()
-        return S if S.startswith("T") else "T"+S
-    # TER / INTERCITES / TGV : pas de code ligne pertinent => None
-    if mode in ("intercites","tgv"): 
-        if S in {"IC","INTERCITES","INTERCITÉS","TGV"}: return None
-    return S or None
-
-def from_geojson(path):
+def load_json(path):
     with open(path, encoding="utf-8") as f:
-        g = json.load(f)
-    out=[]
-    for ft in g.get("features", []):
-        p = ft.get("properties", {})
-        geom = ft.get("geometry") or {}
-        if (geom.get("type") != "Point") or not geom.get("coordinates"): 
-            continue
-        lon, lat = geom["coordinates"][:2]
+        return json.load(f)
 
-        # champs fréquents (IDFM + SNCF)
-        name = p.get("nom_gares") or p.get("nom_iv") or p.get("libelle") \
-            or p.get("name") or p.get("nom") or p.get("intitule") or "—"
-        raw_mode = p.get("mode") or p.get("reseau") or p.get("type") or p.get("mode_transport")
-        mode = norm_mode(raw_mode)
+def guess_latlon(geom):
+    """
+    Retourne (lat, lon) depuis un GeoJSON Geometry (Point).
+    """
+    if not geom: return None, None
+    t = geom.get("type")
+    if t == "Point":
+        coords = geom.get("coordinates") or []
+        if len(coords) >= 2 and all(isinstance(x,(int,float)) for x in coords[:2]):
+            lon, lat = coords[0], coords[1]
+            return float(lat), float(lon)
+    # On ne gère pas les polygones ici (inutile pour les gares)
+    return None, None
 
-        raw_line = p.get("indice_lig") or p.get("idrefliga") or p.get("route_short_name") \
-            or p.get("libelle_ligne") or p.get("ligne")
-        line = norm_line(raw_line, mode)
+def norm(s):
+    return ("" if s is None else str(s)).strip()
 
-        out.append({
+def mode_key(s):
+    """
+    Normalise un texte de mode → {metro,rer,tram,transilien,ter,tgv} ou None.
+    """
+    S = norm(s).lower()
+    if not S: return None
+
+    if S.startswith("met"): return "metro"
+    if " rer" in S or S == "rer": return "rer"
+    if S.startswith("tram") or re.search(r"\bt\d{1,2}[ab]?\b", S): return "tram"
+    if "transilien" in S or "train" in S: return "transilien"
+    if "intercité" in S or "intercites" in S or "intercités" in S: return "ter"
+    if "ter" in S: return "ter"
+    if "tgv" in S or "grande vitesse" in S or "lgv" in S: return "tgv"
+    return None
+
+def extract_line(props, mode):
+    """
+    Essaie d'extraire un code de ligne (quand pertinent).
+    """
+    if not props: return None
+    cands = [
+        props.get("code_ligne"), props.get("ligne"), props.get("nom_ligne"),
+        props.get("line"), props.get("code")
+    ]
+    for c in cands:
+        if c:
+            s = str(c).strip().upper()
+            if mode == "metro":
+                m = re.search(r"(?:LIGNE|METRO|MÉTRO|M)?\s*([0-9]{1,2})\b", s)
+                if m: return m.group(1)
+            if mode == "rer":
+                m = re.search(r"\b([A-E])\b", s)
+                if m: return m.group(1)
+            if mode == "tram":
+                m = re.search(r"\bT\s*([0-9]{1,2}[AB]?)\b", s)
+                if m: return "T" + m.group(1).upper()
+    return None
+
+def from_feature_list(features, source_hint=""):
+    """
+    Convertit une liste de Feature en lignes normalisées:
+      {name, mode, line?, lat, lon}
+    """
+    out = []
+    for ft in features:
+        if not isinstance(ft, dict): continue
+        props = ft.get("properties") or {}
+        geom  = ft.get("geometry") or {}
+        lat, lon = guess_latlon(geom)
+        if lat is None or lon is None: continue
+
+        # Tentative d'identification du mode
+        mode = None
+
+        # 1) champs "mode/réseau/transport"
+        for k in ("mode","reseau","réseau","transport","network","mode_principal","type_transport"):
+            if k in props:
+                mode = mode_key(props[k])
+                if mode: break
+
+        # 2) IDFM a souvent 'reseau' et 'ligne'
+        # 3) SNCF : chercher dans services/type/libellés
+        if not mode:
+            # Concatène des indices textuels
+            hint_parts = []
+            for k in (
+                "services","service","type","categorie","catégorie","label","libelle",
+                "libellé","intitule","intitulé","famille","famille_service","offre"
+            ):
+                v = props.get(k)
+                if v is None: continue
+                if isinstance(v, (list, tuple)):
+                    hint_parts.extend([str(x) for x in v if x is not None])
+                else:
+                    hint_parts.append(str(v))
+            hint_text = " ".join(hint_parts)
+            mode = mode_key(hint_text)
+
+        # Si rien trouvé: laissez vide (on filtrera après)
+        name = (props.get("name") or props.get("nom") or props.get("label")
+                or props.get("libelle") or props.get("libellé") or "Gare").strip()
+
+        # Ligne si pertinent (métro, RER, tram)
+        line = None
+        if mode in ("metro","rer","tram"):
+            line = extract_line(props, mode)
+
+        row = {
             "name": name,
-            "type": "Station" if mode in ("metro","tram") else "Gare",
-            "mode": mode, "line": line,
-            "lat": float(lat), "lon": float(lon),
-            "label": name
-        })
-    return out
-
-def sniff_delimiter(sample):
-    try:
-        return csv.Sniffer().sniff(sample).delimiter
-    except:
-        return ";" if ";" in sample else ","
-
-def from_csv(path):
-    with open(path, "r", encoding="utf-8", newline="") as f:
-        sample = f.read(4096); f.seek(0)
-        delim = sniff_delimiter(sample)
-        r = csv.DictReader(f, delimiter=delim)
-        out=[]
-        for row in r:
-            name = (row.get("name") or row.get("nom") or row.get("station")
-                    or row.get("stop_name") or row.get("label") or "—")
-            raw_mode = row.get("mode") or row.get("reseau") or row.get("transport") \
-                       or row.get("route_type_name")
-            mode = norm_mode(raw_mode)
-            raw_line = row.get("line") or row.get("ligne") or row.get("route_short_name") \
-                       or row.get("code_ligne")
-            line = norm_line(raw_line, mode)
-            lat  = row.get("lat") or row.get("latitude") or row.get("y") or row.get("stop_lat")
-            lon  = row.get("lon") or row.get("longitude") or row.get("x") or row.get("stop_lon")
-            try:
-                lat = float(lat); lon = float(lon)
-            except:
-                continue
-            out.append({
-                "name": name,
-                "type": "Station" if mode in ("metro","tram") else "Gare",
-                "mode": mode, "line": line, "lat": lat, "lon": lon,
-                "label": name
-            })
+            "mode": mode or "",
+            "line": line,
+            "lat": float(lat),
+            "lon": float(lon),
+        }
+        out.append(row)
     return out
 
 def load_any(path):
-    ext = os.path.splitext(path)[1].lower()
-    if ext in (".geojson",".json"): return from_geojson(path)
-    return from_csv(path)
+    """
+    Lit un GeoJSON (FeatureCollection) ou un JSON brut (liste de rows).
+    """
+    data = load_json(path)
+    # Déjà au bon format ?
+    if isinstance(data, list) and data and isinstance(data[0], dict) and "lat" in data[0] and "lon" in data[0]:
+        return data
 
-if len(sys.argv) < 3:
-    print("Usage: python3 build_stations_json.py <in1.[geo]json/csv> [in2 ...] <out.json>")
-    sys.exit(2)
+    # FeatureCollection ?
+    if isinstance(data, dict):
+        if data.get("type") == "FeatureCollection" and isinstance(data.get("features"), list):
+            return from_feature_list(data["features"], source_hint=path)
 
-OUT = sys.argv[-1]
-inputs = sys.argv[1:-1]
+    # Liste de Features ?
+    if isinstance(data, list) and data and isinstance(data[0], dict) and "type" in data[0]:
+        return from_feature_list(data, source_hint=path)
 
-rows=[]
-for p in inputs:
-    rows.extend(load_any(p))
+    # Sinon, essayer dernière chance: pack dans un seul feature
+    if isinstance(data, dict) and "features" in data:
+        return from_feature_list(data["features"], source_hint=path)
 
-# dédoublonnage simple par (name, mode, arrondi coord.)
-seen=set(); unique=[]
-for r in rows:
-    key=(r["name"].strip().lower(), r["mode"], round(r["lat"],6), round(r["lon"],6))
-    if key in seen: continue
-    seen.add(key); unique.append(r)
+    return []
 
-with open(OUT, "w", encoding="utf-8") as w:
-    json.dump(unique, w, ensure_ascii=False, separators=(",",":"))
+def dedupe(rows, precision=5):
+    """
+    Déduplique grossièrement par (mode, name, lat/lon arrondis).
+    """
+    seen = set()
+    out = []
+    for r in rows:
+        key = (r.get("mode",""), r.get("name","").lower(),
+               round(float(r.get("lat",0)), precision),
+               round(float(r.get("lon",0)), precision))
+        if key in seen: continue
+        seen.add(key)
+        out.append(r)
+    return out
 
-print(f"OK -> {OUT}  ({len(unique)} points)  par mode: {Counter(r['mode'] for r in unique)}")
+def main(argv):
+    if len(argv) < 4:
+        print("Usage: python3 scripts/build_stations_json.py <in1> [in2 ...] <out>")
+        sys.exit(1)
+
+    *ins, out_path = argv[1:]
+    all_rows = []
+    for p in ins:
+        if not os.path.exists(p):
+            print(f"ERREUR: fichier introuvable: {p}", file=sys.stderr)
+            sys.exit(2)
+        rows = load_any(p)
+        all_rows.extend(rows)
+
+    # Filtrage: on garde uniquement les modes connus.
+    # Cas SNCF non détecté: on essaye une seconde passe pour TER/TGV via heuristique sur le nom.
+    cleaned = []
+    for r in all_rows:
+        m = r.get("mode","") or ""
+        if m in ALLOWED_MODES:
+            cleaned.append(r)
+            continue
+
+        # Heuristique SNCF: déduire depuis le nom quand le mode est vide
+        name_l = (r.get("name") or "").lower()
+        if "tgv" in name_l or "grande vitesse" in name_l or "lgv" in name_l:
+            r["mode"] = "tgv"
+            cleaned.append(r)
+        elif "intercité" in name_l or "intercites" in name_l or "intercités" in name_l or "ter" in name_l:
+            r["mode"] = "ter"
+            cleaned.append(r)
+        # sinon on laisse tomber
+
+    # Dédupe
+    cleaned = dedupe(cleaned, precision=5)
+
+    # On n’ajoute pas de "line" pour TER/TGV par défaut
+    for r in cleaned:
+        if r["mode"] in ("ter","tgv"):
+            r["line"] = r.get("line") or None
+
+    # Sauvegarde minifiée
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(cleaned, f, ensure_ascii=False, separators=(",",":"))
+
+    # Stats
+    cnt = Counter([r.get("mode","") for r in cleaned])
+    total = len(cleaned)
+    print(f"OK -> {out_path}  ({total} points)  par mode: {cnt}")
+
+if __name__ == "__main__":
+    main(sys.argv)
