@@ -3,7 +3,7 @@ import Store from "./store.js?v=23";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=2";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
-import { makeStationsController } from "./stations.js?v=9"; // ⚠️ v=9 pour TER/TGV
+import { makeStationsController } from "./stations.js?v=10s"; // ⚠️ v=9 pour TER/TGV
 
 /* helpers */
 function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }
