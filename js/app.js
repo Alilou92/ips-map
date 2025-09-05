@@ -3,7 +3,7 @@ import Store from "./store.js?v=23";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=2";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
-import { makeStationsController } from "./stations.js?v=6";
+import { makeStationsController } from "./stations.js?v=7"; // ⚠️ v=7 pour TER/TGV
 
 /* helpers */
 function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }
@@ -83,6 +83,7 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   const dep = normDept(depInput);
   if (!Store.ready) await Store.load();
 
+  // pour une recherche départementale, on masque les stations
   Stations.clear();
   addrLat = null; addrLon = null; lastRadiusMeters = 0;
 
@@ -167,6 +168,7 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
     items = Store.around(lat, lon, 3000, sectorFilter, typesWanted);
   }
 
+  // mémorise le rayon pour les stations
   lastRadiusMeters = triedKm * 1000;
 
   const src = L.marker([lat, lon], {
@@ -178,6 +180,7 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
     showErr("Aucun établissement trouvé autour de cette zone. Essaie d’augmenter le rayon.");
     map.setView([lat, lon], triedKm >= 2 ? 13 : 15);
 
+    // même si aucun établissement, on peut afficher les stations autour
     await Stations.ensure({
       modesWanted: getModesWanted(),
       center: [lat, lon],
@@ -200,12 +203,14 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
   fitToMarkers(map, items.concat([{lat, lon}]));
   src.openPopup();
 
+  // charge/rafraîchit les stations pour ce centre/rayon
   await Stations.ensure({
     modesWanted: getModesWanted(),
     center: [lat, lon],
     radiusMeters: lastRadiusMeters
   });
 
+  // Au cas où l'ouverture du popup décale la mise en page en mobile
   requestAnimationFrame(resizeMapToViewport);
 }
 
@@ -233,6 +238,7 @@ async function runSearch(){
     showErr("Erreur : " + (e?.message || e));
   } finally {
     btn.disabled = false;
+    // s'assure que la carte garde la hauteur correcte après rendu liste/markers
     requestAnimationFrame(resizeMapToViewport);
   }
 }
