@@ -1,139 +1,185 @@
 /* assets/style.css */
 
-/* ——— Thème général (garde ce que tu avais déjà) ——— */
-:root{--bg:#0b0d12;--panel:#131722;--muted:#7f8ca3;--acc:#4ea1ff;--ok:#10b981;--bad:#ef4444}
-*{box-sizing:border-box}
-body{margin:0;background:#0b0d12;color:#e5ecf6;font:14px/1.45 system-ui,Segoe UI,Roboto,Arial}
-.top{display:flex;gap:10px;align-items:center;padding:8px 12px;background:#0f1320;border-bottom:1px solid #1e2637;position:sticky;top:0;z-index:9}
-.top strong{font-weight:700}
-.top input,.top select,.top button{background:#0d1320;color:#e5ecf6;border:1px solid #243149;border-radius:8px;padding:8px 10px}
-.top button{background:#1b4b9b;border-color:#275cc0;cursor:pointer}
-.wrap{display:grid;grid-template-columns:360px 1fr;min-height:calc(100vh - 52px)}
-#sidebar{background:#0d111a;border-right:1px solid #1e2637;padding:10px;overflow:auto}
-#map{height:calc(100vh - 52px)}
-.h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
-.title{font-weight:700}
-.small{color:#7f8ca3}
-.banner{padding:6px 10px;color:#fff;background:#1f2937;display:none}
-.banner.show{display:block}
-.list .item{padding:10px;border:1px solid #1d2434;border-radius:10px;margin:8px 0;background:#101624;cursor:pointer}
-.list .name{font-weight:600}
-.list .badge{margin-left:8px;font-size:12px;border:1px solid #243149;padding:1px 6px;border-radius:999px;color:#a9b8d6}
-.list .meta{color:#a9b8d6;font-size:12px;margin-top:2px}
-.sectionTitle{margin:10px 0 6px;color:#a9b8d6}
-.note,.footer{color:#7f8ca3;font-size:12px;margin-top:10px}
-.legend{position:fixed;right:12px;bottom:12px;background:#0f1320;border:1px solid #243149;border-radius:12px;padding:10px 12px;color:#a9b8d6}
-.src-pin{width:26px;height:26px;border-radius:50%;background:#ffd500;color:#000;display:flex;align-items:center;justify-content:center;font-weight:700;border:2px solid #111}
+/* ——— Thème général ——— */
+:root{
+  --bg:#0b0d12;
+  --panel:#131722;
+  --muted:#7f8ca3;
+  --acc:#4ea1ff;
+  --ok:#10b981;
+  --bad:#ef4444;
 
-/* ——— Ajouts pour l’icône / popup / puces secteur ——— */
-.est-dot{
-  width:16px;height:16px;border-radius:50%;
-  border:2px solid #fff;
+  /* barre du haut */
+  --top-bg:#0f1320;
+  --top-fg:#e5ecf6;
+  --top-field:#0d1320;
+  --top-bd:#243149;
+  --top-h:52px;         /* hauteur approx. de la barre */
 }
 
-.popup-title{
-  font-weight:600;
-  margin-bottom:4px;
+*{box-sizing:border-box}
+html, body { height:100%; }
+body{
+  margin:0;
+  background:var(--bg);
+  color:#e5ecf6;
+  font:14px/1.45 system-ui, Segoe UI, Roboto, Arial;
+}
+
+/* ——— Barre du haut ——— */
+.top{
   display:flex;
+  gap:10px;
   align-items:center;
-  gap:6px;
-  flex-wrap:wrap;
+  padding:8px 12px;
+  background:var(--top-bg) !important;  /* ✅ garde le fond sombre */
+  color:var(--top-fg);
+  border-bottom:1px solid #1e2637;
+  position:sticky;
+  top:0;
+  z-index:1000;
+}
+.top strong{font-weight:700}
+.top input,.top select,.top button{
+  background:var(--top-field);
+  color:var(--top-fg);
+  border:1px solid var(--top-bd);
+  border-radius:8px;
+  padding:8px 10px;
+}
+.top button{
+  background:#1b4b9b;
+  border-color:#275cc0;
+  cursor:pointer;
+}
+.top input[type="checkbox"]{ accent-color:#f59e0b; }
+
+/* ——— Layout ——— */
+.wrap{
+  display:grid;
+  grid-template-columns:360px 1fr;
+  min-height:calc(100vh - var(--top-h));
+}
+#sidebar{
+  background:#0d111a;
+  border-right:1px solid #1e2637;
+  padding:10px;
+  overflow:auto;
+}
+#map{
+  height:calc(100vh - var(--top-h));
+  min-height:320px; /* fallback */
+}
+
+/* ——— Bandeau info/erreur ——— */
+.banner{padding:6px 10px;color:#fff;background:#1f2937;display:none}
+.banner.show{display:block}
+
+/* ——— Liste ——— */
+.h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.title{font-weight:700}
+.small{color:var(--muted)}
+.list .item{
+  padding:10px;
+  border:1px solid #1d2434;
+  border-radius:10px;
+  margin:8px 0;
+  background:#101624;
+  cursor:pointer;
+}
+.list .name{font-weight:600}
+.list .badge{
+  margin-left:8px;
+  font-size:12px;
+  border:1px solid var(--top-bd);
+  padding:1px 6px;
+  border-radius:999px;
+  color:#a9b8d6
+}
+.list .meta{color:#a9b8d6;font-size:12px;margin-top:2px}
+.sectionTitle{margin:10px 0 6px;color:#a9b8d6}
+.note,.footer{color:var(--muted);font-size:12px;margin-top:10px}
+
+/* ——— Légende ——— */
+.legend{
+  position:fixed;
+  right:12px;
+  bottom:12px;
+  background:#0f1320;
+  border:1px solid var(--top-bd);
+  border-radius:12px;
+  padding:10px 12px;
+  color:#a9b8d6
+}
+
+/* ——— Marqueur “A” (adresse) ——— */
+.src-pin{
+  width:26px;height:26px;border-radius:50%;
+  background:#ffd500;color:#000;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:700;border:2px solid #111
+}
+
+/* ——— Icône établissement (couleur IPS) ——— */
+.est-dot{ width:16px;height:16px;border-radius:50%;border:2px solid #fff; }
+
+/* ——— Popup établissement ——— */
+.popup-title{
+  font-weight:600;margin-bottom:4px;
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;
 }
 .popup-meta{ opacity:.85; margin-bottom:6px; }
 .popup-rows > div{ margin:2px 0; }
 
 /* Chips Public / Privé */
 .chip{
-  display:inline-block;
-  padding:2px 8px;
-  border-radius:999px;
-  font-size:12px;
-  line-height:1.2;
-  background:#444;
-  color:#fff;
+  display:inline-block;padding:2px 8px;border-radius:999px;
+  font-size:12px;line-height:1.2;background:#444;color:#fff;
 }
-.chip-public{ background:#1b7f36; } /* vert */
-.chip-prive{  background:#6f42c1; } /* violet */
+.chip-public{ background:#1b7f36; }
+.chip-prive{  background:#6f42c1; }
 
-/* --- stations --- */
-.stn { pointer-events: auto; }
-.stn .stn-dot {
-  width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid #0f1320; background: #fff;
-  box-shadow: 0 0 0 2px rgba(0,0,0,.15);
+/* ——— Stations (markers/tooltip) ——— */
+.stn { pointer-events:auto; }
+.stn .stn-dot{
+  width:14px;height:14px;border-radius:50%;
+  border:2px solid #0f1320;background:#fff;
+  box-shadow:0 0 0 2px rgba(0,0,0,.15);
 }
-.stn-metro .stn-dot { background: #ffffff; border-color: #1E90FF; }     /* bleu M */
-.stn-rer   .stn-dot { background: #ffffff; border-color: #111; }        /* noir RER */
-.stn-transilien .stn-dot { background: #ffffff; border-color: #2c8b2c; }/* vert */
-.stn-ter   .stn-dot { background: #ffffff; border-color: #8a5; }
-.stn-tgv   .stn-dot { background: #ffffff; border-color: #b03a9b; }
+.stn-metro .stn-dot      { border-color:#1E90FF; } /* métro */
+.stn-rer .stn-dot        { border-color:#111;    } /* RER   */
+.stn-transilien .stn-dot { border-color:#2c8b2c; } /* TN    */
+.stn-ter .stn-dot        { border-color:#88aa55; }
+.stn-tgv .stn-dot        { border-color:#b03a9b; }
 
-.station-tt { display:flex; align-items:center; gap:.5rem; }
+.station-tt{
+  display:inline-flex;align-items:center;gap:.5rem;line-height:1.2;
+}
 .station-badge{
-  display:inline-block; min-width:1.8em; padding:.15em .45em;
-  border-radius:1em; color:#fff; font-weight:700; font-size:.85em; text-align:center;
+  display:inline-block;min-width:1.8em;padding:.15em .45em;
+  border-radius:1em;color:#fff;font-weight:700;font-size:.85em;text-align:center;
 }
-/* ──────────────────────────────────────────────────────────────
-   Stations (tooltips / badges)
-   ──────────────────────────────────────────────────────────── */
-.station-tt {
-  display: inline-flex;
-  align-items: center;
-  gap: .5rem;
-  line-height: 1.2;
-}
-.station-badge {
-  display: inline-block;
-  min-width: 1.8em;
-  padding: .15em .45em;
-  border-radius: 1em;
-  color: #fff;
-  font-weight: 700;
-  font-size: .85em;
-  text-align: center;
-}
-.station-name { font-weight: 500; }
+.station-name{ font-weight:500; }
 
-/* (optionnel) rendre les tooltips Leaflet plus propres */
-.leaflet-tooltip {
-  background: rgba(0,0,0,.80);
-  color: #fff;
-  border: 0;
-  border-radius: 4px;
-  padding: 6px 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,.25);
-}
-/* Base */
-html, body { height: 100%; }
-#map { min-height: 320px; } /* fallback desktop */
-
-.top {
-  position: sticky;
-  top: 0;
-  z-index: 1000;
-  background: #fff;
+/* Tooltips Leaflet plus sombres */
+.leaflet-tooltip{
+  background:rgba(0,0,0,.80);
+  color:#fff;border:0;border-radius:4px;padding:6px 8px;
+  box-shadow:0 2px 8px rgba(0,0,0,.25);
 }
 
-/* Responsive mobile */
-@media (max-width: 768px) {
-  .wrap {
-    display: flex;
-    flex-direction: column; /* carte au-dessus, liste en dessous */
-    gap: 8px;
+/* ——— Responsive mobile ——— */
+@media (max-width:768px){
+  .wrap{
+    display:flex;flex-direction:column;gap:8px;
+    min-height:auto;
   }
-
-  /* La carte prend toute la hauteur dispo (on fixera la valeur exacte via JS) */
-  #map {
-    height: auto;        /* la vraie hauteur sera injectée en ligne */
-    min-height: 50vh;    /* fallback si JS n'a pas encore tourné */
+  #map{
+    height:auto;         /* la vraie hauteur est fixée par JS */
+    min-height:50vh;     /* fallback si JS n’a pas encore tourné */
   }
-
-  /* La liste défile si elle est trop longue */
-  #sidebar {
-    max-height: 45vh;
-    overflow: auto;
+  #sidebar{
+    max-height:45vh; overflow:auto;
   }
-
-  /* Optionnel : alléger l’interface */
-  .legend { display: none; }
+  .legend{ display:none; }
 }

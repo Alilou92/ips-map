@@ -5,15 +5,26 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>IPS Map</title>
 
+  <!-- Favicon simple en SVG inline -->
   <link rel="icon" type="image/svg+xml"
         href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%230f1320"/><text x="50%" y="52%" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="28" fill="%234ea1ff">IPS</text></svg>'>
 
-  <!-- cache-bust CSS -->
-  <link rel="stylesheet" href="./assets/style.css?v=31" />
+  <!-- CSS principal (cache-bust) -->
+  <link rel="stylesheet" href="./assets/style.css?v=32" />
 
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+  <!-- Garde pour la hauteur de carte, utile sur mobile avant que JS n'ajuste -->
+  <style>
+    #map { min-height: 320px; }
+    .visually-hidden {
+      position: absolute !important; height: 1px; width: 1px;
+      overflow: hidden; clip: rect(1px, 1px, 1px, 1px);
+      white-space: nowrap; border: 0; padding: 0; margin: -1px;
+    }
+  </style>
 </head>
 <body>
   <noscript>
@@ -56,7 +67,7 @@
 
     <button id="go" type="button">Chercher</button>
 
-    <!-- -------- Transports (corrigé) -------- -->
+    <!-- -------- Transports -------- -->
     <div style="display:flex; gap:10px; align-items:center; margin-left:12px">
       <label style="display:flex;align-items:center;gap:6px">
         <input id="st_metro" type="checkbox" checked /> Métro
@@ -108,18 +119,10 @@
     <div style="margin-top:6px">Gris = non publié</div>
   </div>
 
-  <!-- optionnel : version globale pour cache-bust des fetch/import dynamiques -->
+  <!-- Optionnel : version globale accessible par les scripts -->
   <script>window.APP_VERSION = '31';</script>
 
-  <!-- cache-bust JS principal -->
+  <!-- JS principal (cache-bust). Assure-toi qu'il n'y a PAS d'autre app.js ailleurs. -->
   <script type="module" src="./js/app.js?v=2025-09-05-2"></script>
-
-  <style>
-    .visually-hidden {
-      position: absolute !important; height: 1px; width: 1px;
-      overflow: hidden; clip: rect(1px, 1px, 1px, 1px);
-      white-space: nowrap; border: 0; padding: 0; margin: -1px;
-    }
-  </style>
 </body>
 </html>
