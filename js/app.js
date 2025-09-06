@@ -3,7 +3,8 @@ import Store from "./store.js?v=23";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=2";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
-import { makeStationsController } from "./stations.js?v=10s"; // ⚠️ v=9 pour TER/TGV
+// ⬇️ bump de version pour forcer le cache-bust et correspondre au fichier corrigé
+import { makeStationsController } from "./stations.js?v=12";
 
 /* helpers */
 function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }
