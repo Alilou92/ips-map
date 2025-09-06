@@ -4,7 +4,7 @@
 import { distanceMeters } from "./util.js";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "10";
+const DATA_VERSION = "11";
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
@@ -111,12 +111,13 @@ function colorFor(mode, line) {
   if (m === "tgv")         return DEFAULT_BY_MODE.tgv;
   return "#666";
 }
+
 function badgeText(mode, line){
   const m = (mode || "").toLowerCase();
   const l = String(line || "").toUpperCase();
-  if (m === "metro") return l || "M";
-  if (m === "rer") return l ? `RER ${l}` : "RER";
-  if (m === "tram") return l || "T";
+  if (m === "metro")      return l || "M";
+  if (m === "rer")        return l ? `RER ${l}` : "RER";
+  if (m === "tram")       return l || "T";
   if (m === "transilien") return l || "TN";
   return (MODE_LABEL[m] || m || "?").toUpperCase();
 }
@@ -144,6 +145,7 @@ function tooltipHtml(row){
     <span style="opacity:.85">${esc(suffix)}</span>
   </div>`;
 }
+
 function popupHtml(row){
   const mode = MODE_LABEL[row.mode] || (row.mode || "").toUpperCase();
   let detail = "";
@@ -155,7 +157,7 @@ function popupHtml(row){
   <div style="opacity:.85">${esc(mode)}</div></div>`;
 }
 
-/* ───────── extraction nom/ligne ───────── */
+/* ───────── extraction nom/ligne (fallback) ───────── */
 const NAME_KEYS = [
   "name","nom","nom_gare","nomlong","nom_long","libelle","libelle_gare","label","intitule",
   "stop_name","nom_station","zdl_nom","nom_zdl","nom_commune","appellation","appellation_longue",
@@ -181,6 +183,7 @@ function guessModeFromContext(row, nameU, lineU){
   }
   return null;
 }
+
 function extractLine(row, mode, rawLine, nameU){
   let L = normalizeLine(rawLine, mode);
   if (L) return L;
