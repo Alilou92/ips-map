@@ -1,20 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# build_stations.py — génère data/stations.min.json (Métro/RER/Tram/Transilien)
-# - Découverte de l’archive via data.gouv.fr (ou IDFM_GTFS_URL fourni)
-# - Parse GTFS routes/stops/trips/stop_times
-# - Ne garde PAS les bus
-# - Déduit mode + ligne; colorHex = route_color si dispo
-# - Sortie: [{name, mode, line, lat, lon, colorHex?}, ...]
+# ─────────────────────────────────────────────────────────────────────────────
+# build_stations.py
+# Génère data/stations.min.json à partir d'un GTFS (IDFM) :
+#  - Découverte auto via data.gouv.fr (dataset slug)
+#  - Ou usage d'un fichier local / URL (env IDFM_GTFS_URL)
+#  - Parse routes/stops/trips/stop_times pour associer chaque station aux lignes
+#  - Déduit mode (métro, RER, tram, transilien, TER, TGV) + numéro/lettre
+#  - Exporte: [{name, mode, line, lat, lon, colorHex?}, ...]
+#
+# Usage:
+#   python3 scripts/build_stations.py
+#   IDFM_GTFS_URL="~/Downloads/idfm-gtfs.zip" python3 scripts/build_stations.py
+# ─────────────────────────────────────────────────────────────────────────────
 
-import os, re, io, csv, sys, json, zipfile, datetime
+import os
+import re
+import io
+import csv
+import sys
+import json
+import zipfile
+import datetime
 from collections import defaultdict
 from typing import Dict, Set, Tuple, List, Optional
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Découverte data.gouv + param utilisateur
+# Découverte data.gouv + entrée forcée facultative
 # ─────────────────────────────────────────────────────────────────────────────
 
 DATAGOUV_DATASET_SLUG = os.environ.get(
@@ -29,7 +43,7 @@ def http_get_json(url: str):
         return json.loads(r.read().decode("utf-8"))
 
 def discover_latest_idfm_zip_url_via_datagouv(slug: str) -> Optional[str]:
-    """Trouve la ressource GTFS ZIP la plus récente d’un dataset data.gouv.fr."""
+    """Retourne l’URL de la ressource GTFS zip la plus récente d’un dataset data.gouv.fr."""
     api = f"https://www.data.gouv.fr/api/1/datasets/{slug}/"
     try:
         data = http_get_json(api)
@@ -38,13 +52,12 @@ def discover_latest_idfm_zip_url_via_datagouv(slug: str) -> Optional[str]:
         return None
 
     resources = data.get("resources") or []
-    cand: List[Tuple[datetime.datetime, str]] = []
+    candidates: List[Tuple[datetime.datetime, str]] = []
     for res in resources:
         url = (res.get("url") or "").strip()
         fmt = (res.get("format") or "").lower()
         mime = (res.get("mime") or "").lower()
         title = ((res.get("title") or "") + " " + (res.get("description") or "")).lower()
-
         looks_like_gtfs = (
             "gtfs" in fmt or "gtfs" in mime or "gtfs" in title
             or (url.endswith(".zip") and ("gtfs" in url.lower() or "offre-transport" in url.lower()))
@@ -56,29 +69,32 @@ def discover_latest_idfm_zip_url_via_datagouv(slug: str) -> Optional[str]:
                 dt = datetime.datetime.fromisoformat(lm.replace("Z", "+00:00"))
             except Exception:
                 dt = datetime.datetime.min
-            cand.append((dt, url))
+            candidates.append((dt, url))
 
-    if not cand:
+    if not candidates:
         print("[data.gouv] Aucune ressource GTFS zip trouvée.")
         return None
 
-    cand.sort(reverse=True, key=lambda t: t[0])
-    best = cand[0][1]
+    candidates.sort(reverse=True, key=lambda t: t[0])
+    best = candidates[0][1]
     print(f"[data.gouv] GTFS sélectionné : {best}")
     return best
 
 def download_bytes(url_or_path: str) -> bytes:
-    """Télécharge http(s) OU lit un fichier local (file:// ou ~)."""
+    """Télécharge depuis http(s) ou lit un fichier local (supporte file:// et ~)."""
     if not url_or_path:
         raise ValueError("URL/chemin vide")
+
     if url_or_path.startswith("file://"):
         p = os.path.expanduser(url_or_path[7:])
         with open(p, "rb") as f:
             return f.read()
+
     p = os.path.expanduser(url_or_path)
     if os.path.exists(p):
         with open(p, "rb") as f:
             return f.read()
+
     req = Request(url_or_path, headers={"User-Agent": "ips-map-builder/1.0"})
     try:
         with urlopen(req, timeout=120) as r:
@@ -89,15 +105,46 @@ def download_bytes(url_or_path: str) -> bytes:
         raise RuntimeError(f"Téléchargement en échec : {url_or_path} ({e})") from e
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Couleurs (fallback si route_color absent)
+# ─────────────────────────────────────────────────────────────────────────────
+
+METRO_COLORS = {
+    "1":"#FFCD00","2":"#1D87C9","3":"#9FCE66","3BIS":"#84C28E","4":"#A0006E",
+    "5":"#F28E00","6":"#76C696","7":"#F59CB2","7BIS":"#89C8C5","8":"#CE64A6",
+    "9":"#B0BD00","10":"#D6C178","11":"#704B1C","12":"#007852","13":"#99B4CB","14":"#662483"
+}
+RER_COLORS = {"A":"#E11E2B","B":"#0072BC","C":"#F6A800","D":"#2E7D32","E":"#8E44AD"}
+TRAM_COLORS = {
+    "T1":"#6F6F6F","T2":"#0096D7","T3":"#C77DB3","T3A":"#C77DB3","T3B":"#C77DB3","T4":"#5BC2E7",
+    "T5":"#A9CC51","T6":"#00A36D","T7":"#E98300","T8":"#B1B3B3","T9":"#C1002A","T10":"#6E4C9A",
+    "T11":"#575756","T12":"#0077C8","T13":"#008D36"
+}
+TRANSILIEN_COLORS = {"H":"#0064B0","J":"#9D2763","L":"#5C4E9B","N":"#00936E","P":"#E2001A","U":"#6F2C91","K":"#2E3192","R":"#00A4A7"}
+
+DEFAULT_BY_MODE = {
+    "metro":"#1D87C9","rer":"#0072BC","tram":"#00A36D","transilien":"#2E3192","ter":"#0A74DA","tgv":"#A1006B"
+}
+
+def color_for(mode: str, line: Optional[str], color_hex: Optional[str]) -> Optional[str]:
+    if color_hex:
+        return color_hex
+    m = (mode or "").lower()
+    l = (line or "").upper()
+    if m == "metro":      return METRO_COLORS.get(l.lstrip("0")) or DEFAULT_BY_MODE["metro"]
+    if m == "rer":        return RER_COLORS.get(l)              or DEFAULT_BY_MODE["rer"]
+    if m == "tram":       return TRAM_COLORS.get(l if l.startswith("T") else f"T{l}") or DEFAULT_BY_MODE["tram"]
+    if m == "transilien": return TRANSILIEN_COLORS.get(l)       or DEFAULT_BY_MODE["transilien"]
+    if m == "ter":        return DEFAULT_BY_MODE["ter"]
+    if m == "tgv":        return DEFAULT_BY_MODE["tgv"]
+    return None
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Utilitaires parsing & normalisation
 # ─────────────────────────────────────────────────────────────────────────────
 
-METRO_ALLOWED = {str(i) for i in range(1, 15)} | {"3BIS", "7BIS"}  # 1..14 + 3BIS/7BIS
-RER_ALLOWED   = set(list("ABCDE"))
-TN_ALLOWED    = set(list("HJKLNRPU"))
-
 def parse_color_hex(s: str) -> Optional[str]:
-    if not s: return None
+    if not s:
+        return None
     s = str(s).strip()
     m = re.match(r"^#?([0-9A-Fa-f]{6})$", s)
     if m: return f"#{m.group(1).upper()}"
@@ -121,123 +168,86 @@ def norm_name(raw: str) -> str:
     s = re.sub(r"\s{2,}", " ", s).strip()
     return s or "Gare"
 
-def normalize_line_from_short(mode: str, short_name: str) -> Optional[str]:
-    s = (short_name or "").upper().strip()
-    if not s: return None
-    if mode == "metro":
-        m = re.match(r"^(?:M)?\s*0*([0-9]{1,2})$", s)
-        if m and m.group(1) in METRO_ALLOWED: return m.group(1)
-        m = re.match(r"^(?:M)?\s*(3|7)\s*BIS$", s)
-        if m: return "3BIS" if m.group(1) == "3" else "7BIS"
-        return None
-    if mode == "tram":
-        m = re.match(r"^(?:T)?\s*([0-9]{1,2}[AB]?)$", s)
-        if m: return f"T{m.group(1)}"
-        return None
-    if mode == "rer":
-        m = re.match(r"^[A-E]$", s)
-        if m: return m.group(0)
-        return None
-    if mode == "transilien":
-        m = re.match(r"^[HJKLNRPU]$", s)
-        if m: return m.group(0)
-        return None
-    return None
-
 def normalize_line(raw: str, mode: str) -> Optional[str]:
     if not raw: return None
     S = str(raw).upper()
-    if mode == "rer":
-        m = re.search(r"\bRER\s*([A-E])\b", S)
-        if m: return m.group(1)
+    m = re.search(r"\bRER\s*([A-E])\b", S)
+    if m: return m.group(1)
     if mode == "metro":
-        m = re.search(r"\b(?:M|MÉTRO|METRO|LIGNE)\s*(3BIS|7BIS)\b", S)
-        if m: return m.group(1)
         m = re.search(r"\b(?:M|MÉTRO|METRO|LIGNE)\s*([0-9]{1,2})\b", S)
-        if m and m.group(1) in METRO_ALLOWED: return m.group(1)
+        if m: return m.group(1)
+        m = re.search(r"\b([37])\s*BIS\b", S)
+        if m: return "3BIS" if m.group(1) == "3" else "7BIS"
     if mode == "tram":
         m = re.search(r"\bT\s*([0-9]{1,2}[AB]?)\b", S)
         if m: return f"T{m.group(1)}"
         m = re.search(r"\bTRAM\s*([0-9]{1,2}[AB]?)\b", S)
         if m: return f"T{m.group(1)}"
     if mode == "transilien":
+        m = re.search(r"\b(?:LIGNE|TRANSILIEN)\s+([HJKLNRPU])\b", S)
+        if m: return m.group(1)
         m = re.search(r"\b([HJKLNRPU])\b", S)
         if m: return m.group(1)
     return None
 
-def greedy_line(mode: str, short_name: str, long_name: str) -> Optional[str]:
-    """Dernier recours — mais on reste strict (éviter de prendre des bus)."""
-    s = (short_name or "").upper()
-    l = (long_name  or "").upper()
-    both = f"{s} {l}".strip()
-
-    if mode == "rer":
-        m = re.search(r"\bRER\s*([A-E])\b", both) or re.search(r"\b([A-E])\b", both)
-        return m.group(1) if m else None
-
+def normalize_line_from_short(mode: str, short_name: str) -> Optional[str]:
+    s = (short_name or "").upper().strip()
+    if not s: return None
     if mode == "metro":
-        m = re.search(r"\b(3BIS|7BIS)\b", both)
+        m = re.match(r"^(?:M)?\s*0*([0-9]{1,2})$", s)
         if m: return m.group(1)
-        m = re.search(r"\b([0-9]{1,2})\b", both)
-        if m and m.group(1) in METRO_ALLOWED: return m.group(1)
-        return None
-
+        m = re.match(r"^(?:M)?\s*(3|7)\s*BIS$", s)
+        if m: return "3BIS" if m.group(1) == "3" else "7BIS"
     if mode == "tram":
-        m = re.search(r"\bT\s*([0-9]{1,2}[AB]?)\b", both) or re.search(r"\b([0-9]{1,2}[AB]?)\b", both)
-        return f"T{m.group(1)}" if m else None
-
+        m = re.match(r"^(?:T)?\s*([0-9]{1,2}[AB]?)$", s)
+        if m: return f"T{m.group(1)}"
+    if mode == "rer":
+        m = re.match(r"^[A-E]$", s)
+        if m: return m.group(0)
     if mode == "transilien":
-        m = re.search(r"\b([HJKLNRPU])\b", both)
-        return m.group(1) if m else None
-
+        m = re.match(r"^[HJKLNRPU]$", s)
+        if m: return m.group(0)
     return None
 
 def deduce_mode_from_route(route_type: str, short_name: str, long_name: str = "") -> Optional[str]:
-    """Déduit le mode en combinant route_type et motifs — en excluant BUS."""
-    rt = str(route_type or "").strip()  # GTFS: 0=Tram, 1=Subway, 2=Rail, 3=Bus, ...
-    s  = (short_name or "").upper().strip()
-    l  = (long_name  or "").upper().strip()
-
-    # Exclusion BUS immédiate
-    if rt == "3":
+    """
+    Règles solides :
+    - On ÉCARTE d’abord les BUS (route_type == 3).
+    - RER/métro/tram/transilien reconnus par motifs + types GTFS quand ils sont fiables.
+    - On ne force plus "transilien" par défaut sur route_type=2 si on n’a aucun motif.
+    """
+    rt = str(route_type or "").strip()
+    if rt == "3":  # BUS → on ignore
         return None
 
-    # Métro: route_type 1 OU présence claire de METRO/MÉTRO + index 1..14/3BIS/7BIS
-    if rt == "1" or "MÉTRO" in l or "METRO" in l:
-        # on accepte métro seulement si numéro cohérent
-        if s in METRO_ALLOWED or re.fullmatch(r"(?:M|METRO|MÉTRO)?\s*(3BIS|7BIS)", s) or re.fullmatch(r"(?:M|METRO|MÉTRO)?\s*([0-9]{1,2})", s):
-            num = normalize_line_from_short("metro", s) or normalize_line(l, "metro") or greedy_line("metro", s, l)
-            if num in METRO_ALLOWED:
-                return "metro"
+    s = (short_name or "").upper().strip()
+    l = (long_name  or "").upper().strip()
 
-    # Tram: route_type 0 OU présence d'un Tn
-    if rt == "0" or "TRAM" in l or re.search(r"\bT\s*\d", s):
-        ln = normalize_line_from_short("tram", s) or normalize_line(l, "tram") or greedy_line("tram", s, l)
-        if ln:
-            return "tram"
-
-    # Rail (RER/Transilien) → route_type 2 recommandé
-    if rt == "2" or "RER" in l or "TRANSILIEN" in l:
-        # RER si on a lettre A-E ET mention RER quelque part
-        if ("RER" in l or "RER" in s):
-            rr = normalize_line_from_short("rer", s) or normalize_line(l, "rer") or greedy_line("rer", s, l)
-            if rr in RER_ALLOWED:
-                return "rer"
-        # Transilien si lettre HJKLNRPU
-        tn = normalize_line_from_short("transilien", s) or normalize_line(l, "transilien") or greedy_line("transilien", s, l)
-        if tn in TN_ALLOWED:
-            return "transilien"
-
-    # TER/TGV (rare dans IDFM)
-    if "TER" in l or s == "TER":
-        return "ter"
-    if "TGV" in l or s == "TGV":
+    # Motifs explicites
+    if re.fullmatch(r"[A-E]", s) or "RER" in l:
+        return "rer"
+    if "TRAM" in l or re.search(r"\bT\s*\d", l):
+        return "tram"
+    if re.fullmatch(r"[HJKLNRPU]", s) or "TRANSILIEN" in l:
+        return "transilien"
+    if "TGV" in s or "TGV" in l:
         return "tgv"
+    if "TER" in s or "TER" in l:
+        return "ter"
+    # Métro : seulement si type subway (1) ou motif clair "M/METRO"
+    if rt == "1" or re.match(r"^(?:M|METRO|MÉTRO)\s*(\d{1,2}|3BIS|7BIS)$", s):
+        return "metro"
+    # Tram si type 0
+    if rt == "0":
+        return "tram"
+    # Rail (2) mais sans motif → on ne classe pas
+    if rt == "2":
+        return None
 
     return None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Lecture GTFS
+# Lecture GTFS (routes, stops, trips, stop_times)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def read_csv_from_zip(zf: zipfile.ZipFile, names: List[str]) -> Optional[List[Dict[str, str]]]:
@@ -265,12 +275,13 @@ def build_station_entries_from_gtfs(gtfs_bytes: bytes) -> List[Dict[str, object]
             "color": (r.get("route_color")      or "").strip(),
         }
 
-    # stops
+    # stops (stations & enfants)
     stops_rows = read_csv_from_zip(zf, ["stops.txt"]) or []
     stops: Dict[str, Dict[str, str]] = {}
     parent_of: Dict[str, str] = {}
     children_of: Dict[str, List[str]] = defaultdict(list)
     station_ids: Set[str] = set()
+
     for s in stops_rows:
         sid = (s.get("stop_id") or "").strip()
         if not sid: continue
@@ -293,7 +304,7 @@ def build_station_entries_from_gtfs(gtfs_bytes: bytes) -> List[Dict[str, object]
         if tid and rid:
             trip_to_route[tid] = rid
 
-    # stop_times
+    # stop_times → stop ↔ routes
     stop_to_routes: Dict[str, Set[str]] = defaultdict(set)
     st_rows = read_csv_from_zip(zf, ["stop_times.txt"]) or []
     for st in st_rows:
@@ -303,7 +314,7 @@ def build_station_entries_from_gtfs(gtfs_bytes: bytes) -> List[Dict[str, object]
         rid = trip_to_route.get(tid)
         if rid: stop_to_routes[sid].add(rid)
 
-    # routes au niveau station (parent)
+    # Union des routes au niveau station (parent); si rien → garde la station mais sans routes
     station_routes: Dict[str, Set[str]] = defaultdict(set)
     for sid in stops.keys():
         dest = None
@@ -313,18 +324,21 @@ def build_station_entries_from_gtfs(gtfs_bytes: bytes) -> List[Dict[str, object]
                 dest = p
         elif sid in station_ids:
             dest = sid
-        if not dest: dest = sid
+        if not dest: dest = sid  # stop isolé → station par défaut
+
         if sid in stop_to_routes:
             station_routes[dest].update(stop_to_routes[sid])
+
     for stid in station_ids:
         station_routes.setdefault(stid, set())
 
+    # Construire les entrées finales
     out: List[Dict[str, object]] = []
     seen: Set[Tuple[str, str, Optional[str], float, float]] = set()
 
     for stid, route_ids in station_routes.items():
         s = stops.get(stid, {})
-        # coords (station ou 1er enfant)
+        # coords station ou 1er enfant
         lat = s.get("stop_lat") or s.get("stop_lat_wgs84") or s.get("lat") or ""
         lon = s.get("stop_lon") or s.get("stop_lon_wgs84") or s.get("lon") or ""
         try:
@@ -342,36 +356,26 @@ def build_station_entries_from_gtfs(gtfs_bytes: bytes) -> List[Dict[str, object]
             if lat is None or lon is None:
                 continue
 
-        name = norm_name(s.get("stop_name") or s.get("stop_desc") or s.get("name") or "")
+        raw_name = s.get("stop_name") or s.get("stop_desc") or s.get("name") or ""
+        name = norm_name(raw_name)
 
-        # Pas de routes reliées → ignore
         if not route_ids:
+            # aucune route → on ignore (évite des points « bleus » sans ligne)
             continue
 
         for rid in sorted(route_ids):
             r = routes.get(rid, {})
-            rt, short, long, color = r.get("type"), r.get("short"), r.get("long"), r.get("color")
-
-            mode = deduce_mode_from_route(rt, short, long)
+            mode = deduce_mode_from_route(r.get("type"), r.get("short"), r.get("long"))
             if mode is None:
-                continue  # ignore bus et indéterminés
+                continue  # on ne retient pas les bus/indéterminés
 
-            # ligne (strict)
-            line = (
-                normalize_line_from_short(mode, short) or
-                normalize_line(long, mode)            or
-                greedy_line(mode, short, long)
-            )
-
-            # dernier garde-fou: invalide les lignes incohérentes
-            if mode == "metro" and line not in METRO_ALLOWED:    continue
-            if mode == "rer"   and line not in RER_ALLOWED:      continue
-            if mode == "transilien" and line not in TN_ALLOWED:  continue
-            if mode == "tram"  and (not line or not line.upper().startswith("T")): continue
+            # ligne + couleur
+            line  = normalize_line_from_short(mode, r.get("short")) or normalize_line(r.get("long"), mode)
+            color = parse_color_hex(r.get("color") or "")
+            color = color_for(mode, line, color)
 
             entry = {"name": name, "mode": mode, "line": line, "lat": lat, "lon": lon}
-            col = parse_color_hex(color or "")
-            if col: entry["colorHex"] = col
+            if color: entry["colorHex"] = color
 
             key = (entry["name"], entry["mode"], entry["line"], entry["lat"], entry["lon"])
             if key not in seen:
@@ -388,8 +392,9 @@ def main() -> int:
     print("Téléchargement GTFS IDFM…")
     url = IDFM_GTFS_URL or discover_latest_idfm_zip_url_via_datagouv(DATAGOUV_DATASET_SLUG)
     if not url:
-        print("Impossible de découvrir la dernière archive GTFS IDFM (API data.gouv).")
+        print("Impossible de découvrir la dernière archive GTFS IDFM (essais API data.gouv).")
         return 2
+
     try:
         gtfs_bytes = download_bytes(url)
     except Exception as e:
@@ -413,11 +418,12 @@ def main() -> int:
         str(x.get("line") or ""),
         x.get("lat") or 0.0, x.get("lon") or 0.0
     ))
+
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(entries, f, ensure_ascii=False, separators=(",", ":"))
 
     print(f"OK → {out_path} ({len(entries)} enregistrements)")
-    print("Astuce: aligne DATA_VERSION dans js/stations.js et recharge avec ?bust=…")
+    print("Astuce: recharge la page avec ?bust=… et aligne DATA_VERSION dans js/stations.js")
     return 0
 
 if __name__ == "__main__":
