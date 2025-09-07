@@ -3,8 +3,7 @@ import Store from "./store.js?v=23";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=3";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
-// ⬇️ nouvelle version (v=15)
-import { makeStationsController } from "./stations.js?v=16";
+import { makeStationsController } from "./stations.js?v=17";
 
 /* helpers */
 function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }
@@ -29,8 +28,8 @@ function normalizeSectorFromSelect(raw){
 const { map, markersLayer } = initMap();
 const Stations = makeStationsController({ map });
 
-/* hauteur carte mobile */
-window._leafletMap = map;
+/* ───────── Adaptation mobile : hauteur dynamique de la carte ───────── */
+window._leafletMap = map; // exposé pour invalider la taille après resize
 function resizeMapToViewport() {
   const top = document.querySelector('.top');
   const mapEl = document.getElementById('map');
@@ -47,12 +46,30 @@ window.addEventListener('orientationchange', resizeMapToViewport, { passive: tru
 window.addEventListener('DOMContentLoaded', resizeMapToViewport, { passive: true });
 resizeMapToViewport();
 
-/* état recherche */
+/* ───────── Résolution adresse/ville/CP -> point ───────── */
+async function resolvePoint(q){
+  const s = String(q || "").trim();
+  if (!Store.ready) { try { await Store.load(); } catch{} }
+
+  const CP_RE = /^\d{5}$/;
+  if (CP_RE.test(s) && Array.isArray(Store.gazetteer)){
+    const cp = s;
+    const cand = Store.gazetteer.find(c => Array.isArray(c.cps) && c.cps.includes(cp));
+    if (cand) return { lat: cand.lat, lon: cand.lon, label: `${cand.name} (${cp})` };
+  }
+
+  const city = Store.findCommune(s);
+  if (city) return { lat: city.lat, lon: city.lon, label: city.name };
+
+  return await geocode(q);
+}
+
+/* ───────── État recherches ───────── */
 let addrCircle = null;
 let addrLat = null, addrLon = null;
 let lastRadiusMeters = 0;
 
-/* cases à cocher modes */
+/* cases à cocher pour les modes */
 const MODE_IDS = {
   metro: "st_metro",
   rer: "st_rer",
@@ -79,7 +96,7 @@ function refreshStations(){
   });
 }
 
-/* top 10 département */
+/* dept top 10 */
 async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   const dep = normDept(depInput);
   if (!Store.ready) await Store.load();
@@ -139,11 +156,11 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   else showErr("Top 10 listé (peu de coordonnées disponibles pour la carte).");
 }
 
-/* autour d’une adresse */
+/* autour d’une adresse/ville/CP */
 async function runAround(q, radiusKm, sectorFilter, typesWanted){
   if (!Store.ready) await Store.load();
 
-  const { lat, lon, label } = await geocode(q);
+  const { lat, lon, label } = await resolvePoint(q);
   addrLat = lat; addrLon = lon;
 
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
@@ -153,7 +170,7 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   let items = Store.around(lat, lon, radiusKm * 1000, sectorFilter, typesWanted);
 
-  // élargit si vide
+  // élargit si vide (1 → 2 → 3 km)
   let triedKm = radiusKm;
   if (!items.length && radiusKm < 2){
     triedKm = 2;
@@ -175,16 +192,17 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
     icon: L.divIcon({ className: 'src', html: '<div class="src-pin">A</div>' })
   }).bindPopup(`<strong>Adresse/ville</strong><div>${label}</div>`).addTo(markersLayer);
 
+  // ➜ Afficher les transports dans la zone, même si aucun établissement
+  await Stations.ensure({
+    modesWanted: getModesWanted(),
+    center: [lat, lon],
+    radiusMeters: lastRadiusMeters
+  });
+
   if (!items.length){
     setCount("0 établissement trouvé");
     showErr("Aucun établissement trouvé autour de cette zone. Essaie d’augmenter le rayon.");
     map.setView([lat, lon], triedKm >= 2 ? 13 : 15);
-
-    await Stations.ensure({
-      modesWanted: getModesWanted(),
-      center: [lat, lon],
-      radiusMeters: lastRadiusMeters
-    });
     return;
   }
 
@@ -201,12 +219,6 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   fitToMarkers(map, items.concat([{lat, lon}]));
   src.openPopup();
-
-  await Stations.ensure({
-    modesWanted: getModesWanted(),
-    center: [lat, lon],
-    radiusMeters: lastRadiusMeters
-  });
 
   requestAnimationFrame(resizeMapToViewport);
 }
@@ -246,7 +258,7 @@ document.getElementById('secteur').addEventListener('change', runSearch);
 document.getElementById('radiusKm').addEventListener('change', runSearch);
 document.getElementById('types').addEventListener('change', runSearch);
 
-// (stations) cases à cocher
+// (stations) écoute les cases à cocher
 for (const id of Object.values(MODE_IDS)){
   const el = document.getElementById(id);
   if (el){
@@ -257,7 +269,7 @@ for (const id of Object.values(MODE_IDS)){
   }
 }
 
-// précharge
+// précharge au besoin
 document.getElementById('addr').addEventListener('focus', async () => {
   if (!Store.ready){ try { await Store.load(); } catch{} }
 });

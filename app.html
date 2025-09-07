@@ -5,14 +5,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>IPS Map</title>
 
-  <!-- Favicon simple en SVG inline -->
   <link rel="icon" type="image/svg+xml"
         href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%230f1320"/><text x="50%" y="52%" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="28" fill="%234ea1ff">IPS</text></svg>'>
 
-  <!-- CSS principal -->
   <link rel="stylesheet" href="./assets/style.css?v=34" />
 
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 
@@ -66,7 +63,6 @@
 
     <button id="go" type="button">Chercher</button>
 
-    <!-- -------- Transports -------- -->
     <div style="display:flex; gap:10px; align-items:center; margin-left:12px">
       <label style="display:flex;align-items:center;gap:6px">
         <input id="st_metro" type="checkbox" checked /> Métro
@@ -118,9 +114,7 @@
     <div style="margin-top:6px">Gris = non publié</div>
   </div>
 
-  <!-- Version globale pour cache-bust des données -->
-  <script>window.APP_VERSION = '33';</script>
-
-  <!-- JS principal -->
-<script type="module" src="./js/app.js?v=fix-import-v16"></script></body>
+  <script>window.APP_VERSION = '35';</script>
+  <script type="module" src="./js/app.js?v=35-stations17"></script>
+</body>
 </html>
