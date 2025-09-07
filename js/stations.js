@@ -1,10 +1,9 @@
 // js/stations.js — contrôleur des gares/stations (IDFM + SNCF)
-// Lecture robuste des noms/lignes + couleurs par mode/ligne + couleur fournie par la source
-
+// Icône badge colorée visible en permanence + tooltip/popup
 import { distanceMeters } from "./util.js?v=3";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "14";
+const DATA_VERSION = "15";
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
@@ -29,7 +28,6 @@ const TRAM_COLORS = {
 };
 const TRANSILIEN_COLORS = { H:"#0064B0", J:"#9D2763", L:"#5C4E9B", N:"#00936E", P:"#E2001A", U:"#6F2C91", K:"#2E3192", R:"#00A4A7" };
 
-// Couleurs par mode quand la ligne est inconnue
 const DEFAULT_BY_MODE = {
   metro: "#1D87C9",
   rer: "#0072BC",
@@ -45,7 +43,6 @@ const esc = (s) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;")
 
 function flatten(o){
   if (o && typeof o === "object" && o.properties && typeof o.properties === "object"){
-    // GeoJSON Feature -> on remonte les props au niveau racine
     return { ...o.properties, ...o, ...o.properties };
   }
   return o || {};
@@ -112,13 +109,10 @@ const COLOR_KEYS = [
 function parseHexColor(x){
   if (x == null) return null;
   const s = String(x).trim();
-  // #RRGGBB ou RRGGBB
   let m = s.match(/^#?([0-9A-Fa-f]{6})$/);
   if (m) return `#${m[1].toUpperCase()}`;
-  // 0xRRGGBB
   m = s.match(/^0x([0-9A-Fa-f]{6})$/);
   if (m) return `#${m[1].toUpperCase()}`;
-  // rgb(...) / rgba(...)
   m = s.match(/^rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
   if (m){
     const r = Math.max(0, Math.min(255, Number(m[1])));
@@ -149,17 +143,35 @@ function badgeText(mode, line){
   if (m === "metro")      return l || "M";
   if (m === "rer")        return l ? `RER ${l}` : "RER";
   if (m === "tram")       return l || "T";
-  if (m === "transilien") return l || "TN";
+  if (m === "transilien") return l || "H"; // valeur par défaut visuelle
   return (MODE_LABEL[m] || m || "?").toUpperCase();
 }
 
+/* ───────── rendu icône (badge visible en permanence) ───────── */
 function iconFor(row) {
   const color = colorFor(row.mode, row.line, row.colorHex);
-  const html = `<div style="width:14px;height:14px;border-radius:50%;background:${color};
-    border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)"></div>`;
-  return L.divIcon({ className: "stn", html, iconSize: [18,18], iconAnchor: [9,9] });
+  const btxt  = esc(badgeText(row.mode, row.line));
+
+  const html = `
+  <div style="
+    display:inline-flex;align-items:center;justify-content:center;
+    height:20px;min-width:22px;padding:0 .35em;border-radius:10px;
+    background:${color};color:#fff;font-weight:700;font-size:11px;line-height:18px;
+    border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)">
+    ${btxt}
+  </div>`;
+
+  // Icône un peu plus large pour laisser respirer le badge
+  return L.divIcon({
+    className: "stn",
+    html,
+    iconSize: [28, 22],
+    iconAnchor: [14, 11], // centré
+    tooltipAnchor: [0, -12]
+  });
 }
 
+/* ───────── tooltips/popups ───────── */
 function tooltipHtml(row){
   const color = colorFor(row.mode, row.line, row.colorHex);
   const btxt = badgeText(row.mode, row.line);
@@ -261,7 +273,6 @@ async function loadOnce(){
     let lat = Number(firstNonEmptyRow(r, ["lat","latitude"]));
     let lon = Number(firstNonEmptyRow(r, ["lon","lng","longitude"]));
     if (!Number.isFinite(lat) || !Number.isFinite(lon)){
-      // GeoJSON geometry.coordinates [lon,lat]
       const g = r0 && r0.geometry && Array.isArray(r0.geometry.coordinates) ? r0.geometry.coordinates : null;
       if (g && g.length >= 2){ lon = Number(g[0]); lat = Number(g[1]); }
     }
@@ -277,15 +288,14 @@ async function loadOnce(){
       if (!name) name = "Gare";
     }
 
-    // mode
+    // mode + ligne
     let mode = modeKey(firstNonEmptyRow(r, ["mode","reseau","transport","mode_principal","network"]));
     const nameU = String(rawName || name).toUpperCase();
     const rawLine = firstNonEmptyRow(r, LINE_KEYS);
     const lineU = String(rawLine || "").toUpperCase();
     if (!mode) mode = guessModeFromContext(r, nameU, lineU) || null;
-    if (!mode) continue; // on ignore sans mode fiable
+    if (!mode) continue;
 
-    // ligne
     const line = extractLine(r, mode, rawLine, nameU);
 
     // couleur depuis la source (si fournie)
@@ -312,7 +322,6 @@ export function makeStationsController({ map } = {}){
   function addMarkersFor({ modesWanted, center, radiusMeters } = {}){
     for (const k of Object.keys(groups)) groups[k].clearLayers();
     const wanted = modesWanted instanceof Set ? modesWanted : new Set(Object.keys(groups));
-
     const filterByRadius = Array.isArray(center) && Number.isFinite(radiusMeters) && radiusMeters > 0;
 
     for (const row of all){
@@ -321,7 +330,7 @@ export function makeStationsController({ map } = {}){
         const d = distanceMeters(center[0], center[1], row.lat, row.lon);
         if (d > radiusMeters) continue;
       }
-      const mk = L.marker([row.lat, row.lon], { icon: iconFor(row) });
+      const mk = L.marker([row.lat, row.lon], { icon: iconFor(row), title: row.name });
       mk.bindTooltip(tooltipHtml(row), { sticky: true, direction: "top" });
       mk.bindPopup(popupHtml(row));
       groups[row.mode].addLayer(mk);
