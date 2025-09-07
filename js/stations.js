@@ -1,15 +1,16 @@
 // js/stations.js — contrôleur des gares/stations (IDFM + SNCF)
-// Noms + couleurs corrects, étiquette permanente (zoom >= 13)
-// Détection de ligne étendue + mode debug (?debugStations=1)
+// Noms + couleurs + lignes déduits de façon robuste (case-insensitive, scan global)
 
 import { distanceMeters } from "./util.js?v=3";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "17";
+const DATA_VERSION = "18";
 
-// Debug : ajoute ?debugStations=1 à l’URL pour loguer les cas sans ligne/couleur
-const DEBUG = (typeof window !== "undefined") &&
-  new URLSearchParams(window.location.search).has("debugStations");
+// Debug & options via querystring
+const QS = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+const DEBUG = !!(QS && QS.has("debugStations"));
+const FORCE_LABELS = !!(QS && QS.has("forceStationLabels"));
+const ZOOM_LABELS = FORCE_LABELS ? 0 : 13;
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
@@ -29,38 +30,53 @@ const METRO_COLORS = {
 const RER_COLORS = { A:"#E11E2B", B:"#0072BC", C:"#F6A800", D:"#2E7D32", E:"#8E44AD" };
 const TRAM_COLORS = { T1:"#6F6F6F",T2:"#0096D7",T3:"#C77DB3","T3A":"#C77DB3","T3B":"#C77DB3",T4:"#5BC2E7",T5:"#A9CC51",T6:"#00A36D",T7:"#E98300",T8:"#B1B3B3",T9:"#C1002A",T10:"#6E4C9A",T11:"#575756",T12:"#0077C8",T13:"#008D36" };
 const TRANSILIEN_COLORS = { H:"#0064B0", J:"#9D2763", L:"#5C4E9B", N:"#00936E", P:"#E2001A", U:"#6F2C91", K:"#2E3192", R:"#00A4A7" };
+const DEFAULT_BY_MODE = { metro:"#1D87C9", rer:"#0072BC", tram:"#00A36D", transilien:"#2E3192", ter:"#0A74DA", tgv:"#A1006B" };
 
-// Couleurs par mode quand la ligne est inconnue
-const DEFAULT_BY_MODE = {
-  metro: "#1D87C9",
-  rer: "#0072BC",
-  tram: "#00A36D",
-  transilien: "#2E3192",
-  ter: "#0A74DA",
-  tgv: "#A1006B",
-};
-
-// zoom mini pour afficher les étiquettes permanentes
-const ZOOM_LABELS = 13;
-
-/* ───────── helpers ───────── */
+/* ───────── helpers génériques ───────── */
 const esc = (s) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;")
   .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 
+// aplatit properties + sous-objets utiles
 function flatten(o){
-  if (o && typeof o === "object" && o.properties && typeof o.properties === "object"){
-    // GeoJSON Feature -> on remonte les props au niveau racine
-    return { ...o.properties, ...o, ...o.properties };
+  if (!o || typeof o !== "object") return o || {};
+  let base = o;
+  if (o.properties && typeof o.properties === "object") base = { ...o.properties, ...o };
+  const out = { ...base };
+  for (const key of ["route","ligne","line","network","reseau"]) {
+    const v = base[key];
+    if (v && typeof v === "object") Object.assign(out, v);
   }
-  return o || {};
+  return out;
 }
 
-function firstNonEmptyRow(o, keys){
-  for (const k of keys){
-    const v = o[k];
-    if (v != null && v !== "") return v;
+// récupère une valeur en insensible à la casse + alias multiples
+function getCI(obj, aliases){
+  if (!obj) return null;
+  const keys = Object.keys(obj);
+  for (const a of aliases){
+    const al = a.toLowerCase();
+    const k = keys.find(k => k.toLowerCase() === al);
+    if (k && obj[k] != null && obj[k] !== "") return obj[k];
   }
   return null;
+}
+
+// scanne récursivement toutes les chaînes de l’objet (limité à 2 niveaux pour rester sûr)
+function scanStrings(obj, depth=0, seen = new Set()){
+  if (!obj || depth > 2) return [];
+  const out = [];
+  if (Array.isArray(obj)){
+    for (const v of obj){
+      if (typeof v === "string") out.push(v);
+      else if (v && typeof v === "object") out.push(...scanStrings(v, depth+1, seen));
+    }
+  } else if (typeof obj === "object"){
+    for (const [k,v] of Object.entries(obj)){
+      if (typeof v === "string") out.push(v);
+      else if (v && typeof v === "object" && !seen.has(v)) { seen.add(v); out.push(...scanStrings(v, depth+1, seen)); }
+    }
+  }
+  return out;
 }
 
 function cleanName(raw) {
@@ -85,138 +101,45 @@ function modeKey(m) {
   if (s === "tgv" || s.includes("lgv")) return "tgv";
   return null;
 }
-
-/* ——— Détection de ligne ——— */
 function normalizeLine(raw, mode) {
   const S = String(raw || "").toUpperCase();
   if (!S) return null;
-
-  let m = S.match(/\bRER\s*([A-E])\b/);
-  if (m) return m[1];
-
+  let m = S.match(/\bRER\s*([A-E])\b/);                if (m) return m[1];
   if (mode === "metro") {
-    m = S.match(/\b(?:M|MÉTRO|METRO|LIGNE)\s*([0-9]{1,2})\b/); if (m) return String(Number(m[1]));
-    m = S.match(/\b([37])\s*BIS\b/); if (m) return m[1] === "3" ? "3BIS" : "7BIS";
-    m = S.match(/\b(?:METRO[-\s]?)([0-9]{1,2})\b/); if (m) return String(Number(m[1]));
+    m = S.match(/\b(?:M|MÉTRO|METRO|LIGNE)\s*([0-9]{1,2})\b/); if (m) return m[1];
+    m = S.match(/\b([37])\s*BIS\b/);                          if (m) return m[1]==="3"?"3BIS":"7BIS";
   }
   if (mode === "tram") {
-    m = S.match(/\bT\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1].toUpperCase()}`;
-    m = S.match(/\bTRAM(?:WAY)?\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1].toUpperCase()}`;
+    m = S.match(/\bT\s*([0-9]{1,2}[AB]?)\b/);                 if (m) return `T${m[1]}`;
+    m = S.match(/\bTRAM\s*([0-9]{1,2}[AB]?)\b/);              if (m) return `T${m[1]}`;
   }
   if (mode === "transilien") {
-    m = S.match(/\b(?:LIGNE|TRANSILIEN)\s+([HJKLNRPU])\b/); if (m) return m[1];
-    m = S.match(/\b([HJKLNRPU])\b/); if (m) return m[1];
+    m = S.match(/\b(?:LIGNE|TRANSILIEN)\s+([HJKLNRPU])\b/);   if (m) return m[1];
+    m = S.match(/\b([HJKLNRPU])\b/);                          if (m) return m[1];
   }
   return null;
 }
 
-// Beaucoup plus de champs possibles
-const LINE_KEYS = [
-  // existants
-  "line","ligne","nom_ligne","code_ligne","ligne_long","ligne_nom","ligne_code",
-  "indice_ligne","indice_lig","route_short_name","route_long_name","route_desc",
-  "route_id","id_ligne","id_ref_ligne","reseau_ligne","libelle_ligne",
-  "num_ligne","numero_ligne","ligne_numero","ligne_indice",
-  // variantes fréquentes
-  "nomcourtligne","nomlongligne","ligne_courte","ligne_longue","short_name","long_name",
-  "code","libelle","intitule","label","designation","commercial_short","commercial_long"
-];
-
-// Si aucune clé “classique” n’a permis d’extraire la ligne, on scanne toutes les chaînes
-function searchLineAny(row, mode){
-  for (const [k, v] of Object.entries(row)){
-    if (v == null) continue;
-    if (typeof v === "string") {
-      const L = normalizeLine(v, mode);
-      if (L) return L;
-    } else if (Array.isArray(v)) {
-      for (const item of v){
-        if (typeof item === "string"){
-          const L = normalizeLine(item, mode);
-          if (L) return L;
-        }
-      }
-    }
-  }
-  return null;
-}
-
-function guessModeFromContext(row, nameU, lineU){
-  if (/\bRER\s*[A-E]?\b/.test(nameU) || /\bRER\s*[A-E]?\b/.test(lineU)) return "rer";
-  if (/\b(?:M|MÉTRO|METRO)\s*\d{1,2}\b/.test(nameU) || /\bMETRO\b/.test(lineU)) return "metro";
-  if (/\bT\s*\d{1,2}[AB]?\b/.test(nameU) || /\bTRAM\b/.test(lineU)) return "tram";
-  const isSncf = ("uic" in row) || ("code_ligne" in row) || ("codeuic" in row) || ("voyageurs" in row);
-  if (isSncf){
-    if (/\bTGV\b/.test(nameU) || /\bTGV\b/.test(lineU)) return "tgv";
-    if (/\bTER\b/.test(nameU) || /\bTER\b/.test(lineU)) return "ter";
-    return "transilien";
-  }
-  return null;
-}
-
-function extractLine(row, mode, rawLine, nameU){
-  let Lx = normalizeLine(rawLine, mode);
-  if (Lx) return Lx;
-
-  // Essaie d’autres champs courants
-  if (!Lx){
-    for (const key of LINE_KEYS){
-      const val = row[key];
-      if (!val) continue;
-      Lx = normalizeLine(val, mode);
-      if (Lx) break;
-    }
-  }
-
-  // Ratisser toutes les chaînes en dernier recours
-  if (!Lx) Lx = searchLineAny(row, mode);
-
-  // Bonus : tenter via le nom si mode connu
-  if (!Lx){
-    if (mode === "rer"){ const m = nameU.match(/\bRER\s*([A-E])\b/); if (m) Lx = m[1]; }
-    if (mode === "metro"){
-      let m = nameU.match(/\b(?:M|MÉTRO|METRO)\s*([0-9]{1,2})\b/); if (m) Lx = String(Number(m[1]));
-      if (!Lx){ m = nameU.match(/\b([37])\s*BIS\b/); if (m) Lx = (m[1]==="3"?"3BIS":"7BIS"); }
-    }
-    if (mode === "tram"){ const m = nameU.match(/\bT\s*([0-9]{1,2}[AB]?)\b/); if (m) Lx = `T${m[1].toUpperCase()}`; }
-    if (mode === "transilien"){ const m = nameU.match(/\b([HJKLNRPU])\b/); if (m) Lx = m[1]; }
-  }
-
-  return Lx || null;
-}
-
-/* Couleurs depuis la donnée source (route_color, couleur, rgb(...), etc.) */
+/* Couleurs depuis la donnée source */
 const COLOR_KEYS = [
-  "route_color","route_text_color",               // GTFS
-  "couleur","couleur_hex","couleur_ligne","couleur_rgb",
-  "color","hexa","hex","code_couleur",
-  "couleur_de_ligne","couleur_de_trait","couleur_de_fond",
-  "color_hex","texte_couleur","fond_couleur"
+  "route_color","couleur","couleur_hex","couleur_ligne","color","hexa","hex","code_couleur","couleur_rgb",
+  "routeColour","route_color_hex","color_hex","couleurRVB","rgb","rgb_color"
 ];
-
 function parseHexColor(x){
   if (x == null) return null;
   const s = String(x).trim();
-  // #RRGGBB ou RRGGBB
-  let m = s.match(/^#?([0-9A-Fa-f]{6})$/);
-  if (m) return `#${m[1].toUpperCase()}`;
-  // 0xRRGGBB
-  m = s.match(/^0x([0-9A-Fa-f]{6})$/);
-  if (m) return `#${m[1].toUpperCase()}`;
-  // rgb(...) / rgba(...)
+  let m = s.match(/^#?([0-9A-Fa-f]{6})$/); if (m) return `#${m[1].toUpperCase()}`;
+  m = s.match(/^0x([0-9A-Fa-f]{6})$/);     if (m) return `#${m[1].toUpperCase()}`;
   m = s.match(/^rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
   if (m){
-    const r = Math.max(0, Math.min(255, Number(m[1])));
-    const g = Math.max(0, Math.min(255, Number(m[2])));
-    const b = Math.max(0, Math.min(255, Number(m[3])));
-    const to2 = n => n.toString(16).toUpperCase().padStart(2,"0");
-    return `#${to2(r)}${to2(g)}${to2(b)}`;
+    const to2 = n => Math.max(0,Math.min(255,Number(n))).toString(16).toUpperCase().padStart(2,"0");
+    return `#${to2(m[1])}${to2(m[2])}${to2(m[3])}`;
   }
   return null;
 }
 
 function colorFor(mode, line, sourceHex) {
-  if (sourceHex) return sourceHex; // priorité à la couleur fournie
+  if (sourceHex) return sourceHex;
   const m = (mode || "").toLowerCase();
   const l = String(line || "").toUpperCase();
   if (m === "metro")       return METRO_COLORS[l.replace(/^0+/,"")] || DEFAULT_BY_MODE.metro;
@@ -253,7 +176,6 @@ function tooltipHtml(row){
     row.mode === "rer" && row.line ? ` — RER ${row.line}` :
     row.mode === "tram" && row.line ? ` — Tram ${row.line.replace(/^T/i,"")}` :
     row.mode === "transilien" && row.line ? ` — Ligne ${row.line}` : "";
-
   return `<div class="station-tt">
     <span class="station-badge" style="background:${color}">${esc(btxt)}</span>
     <span class="station-name">${esc(row.name)}</span>
@@ -279,13 +201,87 @@ function popupHtml(row){
   <div style="opacity:.85">${esc(mode)}</div></div>`;
 }
 
-/* ───────── extraction nom/ligne (fallback) ───────── */
+/* ───────── Clés connues ───────── */
 const NAME_KEYS = [
   "name","nom","nom_gare","nomlong","nom_long","libelle","libelle_gare","label","intitule",
   "stop_name","nom_station","zdl_nom","nom_zdl","nom_commune","appellation","appellation_longue",
-  "nom_de_la_gare","gare","station"
+  "nom_de_la_gare","gare","station","designation","denomination","denom"
 ];
 const CITY_KEYS = ["commune","ville","city","localite","locality","arrondissement","commune_principale"];
+const LINE_KEYS = [
+  "line","ligne","nom_ligne","code_ligne","ligne_long","ligne_nom","ligne_code",
+  "indice_ligne","indice_lig",
+  "route_short_name","route_id","route_code","routeName","routeCode","route",
+  "id_ligne","id_ref_ligne","reseau_ligne","libelle_ligne","num_ligne","numero_ligne","ligne_numero","ligne_indice",
+  "letter","lettre","ligne_rer","ligne_metro","ligne_tram","network_line"
+];
+
+/* ───────── Déduction robuste nom/ligne/couleur ───────── */
+function guessModeFromContext(row, nameU, lineU){
+  if (/\bRER\s*[A-E]?\b/.test(nameU) || /\bRER\s*[A-E]?\b/.test(lineU)) return "rer";
+  if (/\b(?:M|MÉTRO|METRO)\s*\d{1,2}\b/.test(nameU) || /\bMETRO\b/.test(lineU)) return "metro";
+  if (/\bT\s*\d{1,2}[AB]?\b/.test(nameU) || /\bTRAM\b/.test(lineU)) return "tram";
+  const isSncf = ("uic" in row) || ("code_ligne" in row) || ("codeuic" in row) || ("voyageurs" in row) || ("sncf" in row);
+  if (isSncf){
+    if (/\bTGV\b/.test(nameU) || /\bTGV\b/.test(lineU)) return "tgv";
+    if (/\bTER\b/.test(nameU) || /\bTER\b/.test(lineU)) return "ter";
+    return "transilien";
+  }
+  return null;
+}
+function extractLine(row, mode, rawLine, nameU){
+  let Lx = normalizeLine(rawLine, mode);
+  if (Lx) return Lx;
+  if (mode === "rer"){ const m = nameU.match(/\bRER\s*([A-E])\b/); if (m) return m[1]; }
+  if (mode === "metro"){
+    let m = nameU.match(/\b(?:M|MÉTRO|METRO)\s*([0-9]{1,2})\b/); if (m) return m[1];
+    m = nameU.match(/\b([37])\s*BIS\b/); if (m) return m[1]==="3"?"3BIS":"7BIS";
+  }
+  if (mode === "tram"){ const m = nameU.match(/\bT\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1].toUpperCase()}`; }
+  if (mode === "transilien"){ const m = nameU.match(/\b([HJKLNRPU])\b/); if (m) return m[1]; }
+  // 🔁 scan global des chaînes si rien trouvé
+  const all = scanStrings(row).map(s => String(s).toUpperCase());
+  for (const s of all){
+    const c = normalizeLine(s, mode);
+    if (c) return c;
+  }
+  return null;
+}
+
+function extractName(row){
+  // 1) clés connues (CI)
+  let raw = getCI(row, NAME_KEYS);
+  // 2) fallback : stop / station imbriqué
+  if (!raw){
+    const stop = getCI(row, ["stop","station","gare","zdl","zdl_nom"]);
+    if (stop && typeof stop === "object") raw = getCI(stop, NAME_KEYS);
+  }
+  // 3) scan global des strings, prend une chaîne "propre" (contient une lettre, pas juste un code)
+  if (!raw){
+    const strings = scanStrings(row);
+    raw = strings.find(s => /[A-Za-zÀ-ÖØ-öø-ÿ]/.test(s) && s.length >= 3 && !/^[A-Z0-9_\-]{2,}$/.test(s));
+  }
+  let name = cleanName(raw);
+  if (!name){
+    // si on voit un motif "Ligne …" ou "RER X" dans le nom brut, on coupe
+    const m = String(raw||"").replace(/\s+/g," ").trim().replace(/^Gare\s+/i,"");
+    name = m;
+  }
+  return name || "Gare";
+}
+
+function extractColor(row){
+  let colRaw = getCI(row, COLOR_KEYS);
+  if (!colRaw){
+    // scan global
+    const strings = scanStrings(row);
+    for (const s of strings){
+      const c = parseHexColor(s);
+      if (c) { colRaw = c; break; }
+    }
+  }
+  return parseHexColor(colRaw);
+}
 
 /* ───────── chargement ───────── */
 let _rowsCache = null;
@@ -307,8 +303,8 @@ async function loadOnce(){
       if (!res.ok) continue;
       const json = await res.json();
       if (Array.isArray(json)) rawRows = json;
-      else if (json && Array.isArray(json.features)) rawRows = json.features; // GeoJSON
-      if (rawRows.length){ console.debug(`[Stations] chargées: ${rawRows.length} via ${url}`); break; }
+      else if (json && Array.isArray(json.features)) rawRows = json.features;
+      if (rawRows.length){ if (DEBUG) console.debug(`[Stations] chargées: ${rawRows.length} via ${url}`); break; }
     }catch{}
   }
 
@@ -317,8 +313,8 @@ async function loadOnce(){
     const r = flatten(r0);
 
     // coords
-    let lat = Number(firstNonEmptyRow(r, ["lat","latitude"]));
-    let lon = Number(firstNonEmptyRow(r, ["lon","lng","longitude"]));
+    let lat = Number(getCI(r, ["lat","latitude"]));
+    let lon = Number(getCI(r, ["lon","lng","longitude"]));
     if (!Number.isFinite(lat) || !Number.isFinite(lon)){
       const g = r0 && r0.geometry && Array.isArray(r0.geometry.coordinates) ? r0.geometry.coordinates : null;
       if (g && g.length >= 2){ lon = Number(g[0]); lat = Number(g[1]); }
@@ -326,51 +322,36 @@ async function loadOnce(){
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
     // nom
-    let rawName = firstNonEmptyRow(r, NAME_KEYS);
-    let city = firstNonEmptyRow(r, CITY_KEYS);
-    let name = cleanName(rawName);
-    if (!name){
-      if (rawName) name = String(rawName).trim();
-      if ((!name || name.toLowerCase()==="gare") && city) name = `Gare de ${city}`;
-      if (!name) name = "Gare";
-    }
+    const name = extractName(r);
 
     // mode
-    let mode = modeKey(firstNonEmptyRow(r, ["mode","reseau","transport","mode_principal","network"]));
-    const nameU = String(rawName || name).toUpperCase();
-    const rawLine = firstNonEmptyRow(r, LINE_KEYS);
-    const lineU = String(rawLine || "").toUpperCase();
-    if (!mode) mode = guessModeFromContext(r, nameU, lineU) || null;
-    if (!mode) continue; // ignore sans mode
+    let mode = modeKey(getCI(r, ["mode","reseau","transport","mode_principal","network","type_transport"]));
+    const stringsU = scanStrings(r).map(x => String(x).toUpperCase());
+    const joined = stringsU.join(" • ");
+    if (!mode) mode = guessModeFromContext(r, joined, joined) || null;
+    if (!mode) continue;
 
     // ligne
-    const line = extractLine(r, mode, rawLine, nameU);
+    const rawLine = getCI(r, LINE_KEYS);
+    const line = extractLine(r, mode, rawLine, joined);
 
-    // couleur depuis la source (si fournie)
-    // On prend la première couleur parseable parmi COLOR_KEYS
-    let colorHex = null;
-    for (const ck of COLOR_KEYS){
-      const val = r[ck];
-      const hex = parseHexColor(val);
-      if (hex){ colorHex = hex; break; }
+    // couleur
+    const colorHex = extractColor(r);
+
+    if (DEBUG && (!line || !colorHex || name === "Gare")){
+      const peek = {};
+      for (const k of [...NAME_KEYS, ...LINE_KEYS, ...COLOR_KEYS, "mode","reseau","transport","network"]) {
+        const v = getCI(r,[k]);
+        if (v != null) peek[k] = v;
+      }
+      console.debug("[stations] Incomplet:", { name, mode, line, hasColor: !!colorHex, sample: peek });
     }
 
-    out.push({ name, mode, line, lat, lon, colorHex, _raw: DEBUG ? r : undefined });
-  }
-
-  if (DEBUG){
-    const unresolved = out.filter(o => !o.line);
-    const byMode = unresolved.reduce((acc, x) => {
-      acc[x.mode] = (acc[x.mode] || 0) + 1;
-      return acc;
-    }, {});
-    console.debug("[Stations][DEBUG] total:", out.length,
-      "sans ligne:", unresolved.length, byMode, "Exemple:", unresolved.slice(0,8));
-    window._stationsDebug = { all: out, unresolved };
+    out.push({ name, mode, line, lat, lon, colorHex });
   }
 
   _rowsCache = out;
-  console.debug(`[Stations] prêtes: ${out.length}`);
+  if (DEBUG) console.debug(`[Stations] prêtes: ${out.length}`);
   return _rowsCache;
 }
 
@@ -378,7 +359,6 @@ async function loadOnce(){
 export function makeStationsController({ map } = {}){
   const _map = map || null;
 
-  // Groupes de couches pour markers + étiquettes par mode
   const groups = {
     markers: {
       metro: L.layerGroup(), rer: L.layerGroup(), tram: L.layerGroup(),
@@ -394,7 +374,6 @@ export function makeStationsController({ map } = {}){
   let lastWanted = new Set(Object.keys(groups.markers));
 
   function attachOrRemoveLayers(wanted){
-    // markers
     for (const m of Object.keys(groups.markers)){
       const layer = groups.markers[m];
       const shouldShow = wanted.has(m) && layer.getLayers().length > 0;
@@ -403,7 +382,6 @@ export function makeStationsController({ map } = {}){
         if (!shouldShow && _map.hasLayer(layer)) _map.removeLayer(layer);
       }
     }
-    // labels uniquement si zoom suffisant
     const showLabels = _map ? _map.getZoom() >= ZOOM_LABELS : false;
     for (const m of Object.keys(groups.labels)){
       const layer = groups.labels[m];
@@ -416,7 +394,6 @@ export function makeStationsController({ map } = {}){
   }
 
   function rebuild({ modesWanted, center, radiusMeters } = {}){
-    // reset
     for (const k of Object.keys(groups.markers)) groups.markers[k].clearLayers();
     for (const k of Object.keys(groups.labels))  groups.labels[k].clearLayers();
 
@@ -432,13 +409,11 @@ export function makeStationsController({ map } = {}){
         if (d > radiusMeters) continue;
       }
 
-      // Marqueur coloré
       const mk = L.marker([row.lat, row.lon], { icon: iconFor(row) });
       mk.bindTooltip(tooltipHtml(row), { sticky: true, direction: "top" });
       mk.bindPopup(popupHtml(row));
       groups.markers[row.mode].addLayer(mk);
 
-      // Étiquette permanente (nom + badge)
       const label = L.tooltip({
         permanent: true,
         className: "stn-name",
@@ -448,14 +423,12 @@ export function makeStationsController({ map } = {}){
       })
       .setLatLng([row.lat, row.lon])
       .setContent(nameLabelHtml(row));
-
       groups.labels[row.mode].addLayer(label);
     }
 
     attachOrRemoveLayers(wanted);
   }
 
-  // mise à jour des labels au zoom
   if (_map){
     _map.on("zoomend", () => attachOrRemoveLayers(lastWanted));
   }

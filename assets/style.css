@@ -161,11 +161,33 @@ body{
 }
 .station-name{ font-weight:500; }
 
-/* Tooltips Leaflet plus sombres */
+/* Tooltips Leaflet plus sombres (général) */
 .leaflet-tooltip{
   background:rgba(0,0,0,.80);
   color:#fff;border:0;border-radius:4px;padding:6px 8px;
   box-shadow:0 2px 8px rgba(0,0,0,.25);
+}
+
+/* ——— ÉTIQUETTES PERMANENTES DES GARES (noms + badge) ——— */
+.leaflet-tooltip.stn-name{
+  background:rgba(255,255,255,0.92);
+  color:#111;
+  border:1px solid rgba(0,0,0,.15);
+  border-radius:12px;
+  padding:2px 6px;
+  box-shadow:0 1px 2px rgba(0,0,0,.15);
+  font-size:12px;
+  line-height:1.2;
+}
+.leaflet-tooltip.stn-name .stn-badge{
+  display:inline-block;
+  min-width:1.4em;
+  text-align:center;
+  color:#fff;
+  font-weight:700;
+  border-radius:1em;
+  padding:0 .4em;
+  margin-right:.35em;
 }
 
 /* ——— Responsive mobile ——— */

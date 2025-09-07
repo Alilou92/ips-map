@@ -3,7 +3,11 @@ import Store from "./store.js?v=23";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=3";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
-import { makeStationsController } from "./stations.js?v=17";
+// ⬇️ passe v=18
+import { makeStationsController } from "./stations.js?v=18";
+
+/* …le reste de ton fichier inchangé… */
+
 
 /* helpers */
 function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }
@@ -29,7 +33,7 @@ const { map, markersLayer } = initMap();
 const Stations = makeStationsController({ map });
 
 /* ───────── Adaptation mobile : hauteur dynamique de la carte ───────── */
-window._leafletMap = map; // exposé pour invalider la taille après resize
+window._leafletMap = map;
 function resizeMapToViewport() {
   const top = document.querySelector('.top');
   const mapEl = document.getElementById('map');
@@ -170,7 +174,6 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   let items = Store.around(lat, lon, radiusKm * 1000, sectorFilter, typesWanted);
 
-  // élargit si vide (1 → 2 → 3 km)
   let triedKm = radiusKm;
   if (!items.length && radiusKm < 2){
     triedKm = 2;
@@ -185,7 +188,6 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
     items = Store.around(lat, lon, 3000, sectorFilter, typesWanted);
   }
 
-  // mémorise le rayon pour les stations
   lastRadiusMeters = triedKm * 1000;
 
   const src = L.marker([lat, lon], {
