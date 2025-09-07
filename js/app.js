@@ -4,7 +4,7 @@ import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
 // ⬇️ nouvelle version (v=15)
-import { makeStationsController } from "./stations.js?v=15";
+import { makeStationsController } from "./stations.js?v=16";
 
 /* helpers */
 function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }

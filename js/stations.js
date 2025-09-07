@@ -1,9 +1,12 @@
 // js/stations.js — contrôleur des gares/stations (IDFM + SNCF)
-// Icône badge colorée visible en permanence + tooltip/popup
+// Badge coloré + nom visible (selon zoom) + tooltip/popup.
+// Couleur prioritaire = fournie par la source, sinon palette officielle.
+// Re-rendu auto à chaque changement de zoom pour afficher/masquer les noms.
+
 import { distanceMeters } from "./util.js?v=3";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "15";
+const DATA_VERSION = "16";
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
@@ -28,6 +31,7 @@ const TRAM_COLORS = {
 };
 const TRANSILIEN_COLORS = { H:"#0064B0", J:"#9D2763", L:"#5C4E9B", N:"#00936E", P:"#E2001A", U:"#6F2C91", K:"#2E3192", R:"#00A4A7" };
 
+// Couleurs par mode quand la ligne est inconnue
 const DEFAULT_BY_MODE = {
   metro: "#1D87C9",
   rer: "#0072BC",
@@ -43,6 +47,7 @@ const esc = (s) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;")
 
 function flatten(o){
   if (o && typeof o === "object" && o.properties && typeof o.properties === "object"){
+    // GeoJSON Feature -> remonte les props au niveau racine
     return { ...o.properties, ...o, ...o.properties };
   }
   return o || {};
@@ -83,17 +88,22 @@ function normalizeLine(raw, mode) {
   const S = String(raw || "").toUpperCase();
   if (!S) return null;
 
+  // RER
   let m = S.match(/\bRER\s*([A-E])\b/);
   if (m) return m[1];
 
+  // Métro
   if (mode === "metro") {
-    m = S.match(/\b(?:M|MÉTRO|METRO|LIGNE)\s*([0-9]{1,2})\b/); if (m) return m[1];
+    m = S.match(/\b(?:M|MÉTRO|METRO)\s*([0-9]{1,2})\b/); if (m) return m[1];
     m = S.match(/\b([37])\s*BIS\b/); if (m) return m[1] === "3" ? "3BIS" : "7BIS";
+    m = S.match(/\bM\s*([0-9]{1,2})\b/); if (m) return m[1];
   }
+  // Tram
   if (mode === "tram") {
-    m = S.match(/\bT\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1]}`;
-    m = S.match(/\bTRAM\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1]}`;
+    m = S.match(/\bT\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1].toUpperCase()}`;
+    m = S.match(/\bTRAM\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1].toUpperCase()}`;
   }
+  // Transilien
   if (mode === "transilien") {
     m = S.match(/\b(?:LIGNE|TRANSILIEN)\s+([HJKLNRPU])\b/); if (m) return m[1];
     m = S.match(/\b([HJKLNRPU])\b/); if (m) return m[1];
@@ -109,10 +119,13 @@ const COLOR_KEYS = [
 function parseHexColor(x){
   if (x == null) return null;
   const s = String(x).trim();
+  // #RRGGBB ou RRGGBB
   let m = s.match(/^#?([0-9A-Fa-f]{6})$/);
   if (m) return `#${m[1].toUpperCase()}`;
+  // 0xRRGGBB
   m = s.match(/^0x([0-9A-Fa-f]{6})$/);
   if (m) return `#${m[1].toUpperCase()}`;
+  // rgb(...) / rgba(...)
   m = s.match(/^rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
   if (m){
     const r = Math.max(0, Math.min(255, Number(m[1])));
@@ -147,24 +160,35 @@ function badgeText(mode, line){
   return (MODE_LABEL[m] || m || "?").toUpperCase();
 }
 
-/* ───────── rendu icône (badge visible en permanence) ───────── */
-function iconFor(row) {
+/* ───────── rendu icône ─────────
+   - Badge coloré + (option) nom à côté si zoom >= 14
+   - Pour limiter le bruit visuel, le nom s'affiche à partir d'un certain zoom. */
+function iconHtml(row, showName){
   const color = colorFor(row.mode, row.line, row.colorHex);
   const btxt  = esc(badgeText(row.mode, row.line));
+  const name  = esc(row.name);
 
-  const html = `
-  <div style="
-    display:inline-flex;align-items:center;justify-content:center;
-    height:20px;min-width:22px;padding:0 .35em;border-radius:10px;
-    background:${color};color:#fff;font-weight:700;font-size:11px;line-height:18px;
-    border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)">
-    ${btxt}
+  return `
+  <div style="display:inline-flex;align-items:center;gap:.35rem;">
+    <div style="
+      display:inline-flex;align-items:center;justify-content:center;
+      height:20px;min-width:22px;padding:0 .35em;border-radius:10px;
+      background:${color};color:#fff;font-weight:700;font-size:11px;line-height:18px;
+      border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)">
+      ${btxt}
+    </div>
+    ${showName ? `<div style="background:#fff;border-radius:6px;padding:1px 6px;
+                    font-size:11px;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.15);
+                    border:1px solid rgba(0,0,0,.08);white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;">
+                    ${name}
+                  </div>` : ``}
   </div>`;
+}
 
-  // Icône un peu plus large pour laisser respirer le badge
+function iconFor(row, showName) {
   return L.divIcon({
     className: "stn",
-    html,
+    html: iconHtml(row, showName),
     iconSize: [28, 22],
     iconAnchor: [14, 11], // centré
     tooltipAnchor: [0, -12]
@@ -234,6 +258,7 @@ function extractLine(row, mode, rawLine, nameU){
   if (mode === "metro"){
     let m = nameU.match(/\b(?:M|MÉTRO|METRO)\s*([0-9]{1,2})\b/); if (m) return m[1];
     m = nameU.match(/\b([37])\s*BIS\b/); if (m) return m[1]==="3"?"3BIS":"7BIS";
+    m = nameU.match(/\bM\s*([0-9]{1,2})\b/); if (m) return m[1];
   }
   if (mode === "tram"){ const m = nameU.match(/\bT\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1].toUpperCase()}`; }
   if (mode === "transilien"){ const m = nameU.match(/\b([HJKLNRPU])\b/); if (m) return m[1]; }
@@ -273,6 +298,7 @@ async function loadOnce(){
     let lat = Number(firstNonEmptyRow(r, ["lat","latitude"]));
     let lon = Number(firstNonEmptyRow(r, ["lon","lng","longitude"]));
     if (!Number.isFinite(lat) || !Number.isFinite(lon)){
+      // GeoJSON geometry.coordinates [lon,lat]
       const g = r0 && r0.geometry && Array.isArray(r0.geometry.coordinates) ? r0.geometry.coordinates : null;
       if (g && g.length >= 2){ lon = Number(g[0]); lat = Number(g[1]); }
     }
@@ -318,11 +344,14 @@ export function makeStationsController({ map } = {}){
     transilien: L.layerGroup(), ter: L.layerGroup(), tgv: L.layerGroup(),
   };
   let all = [];
+  let currentZoom = _map ? _map.getZoom() : 0;
 
   function addMarkersFor({ modesWanted, center, radiusMeters } = {}){
     for (const k of Object.keys(groups)) groups[k].clearLayers();
     const wanted = modesWanted instanceof Set ? modesWanted : new Set(Object.keys(groups));
     const filterByRadius = Array.isArray(center) && Number.isFinite(radiusMeters) && radiusMeters > 0;
+
+    const showName = currentZoom >= 14; // ← nom visible à partir du zoom 14
 
     for (const row of all){
       if (!wanted.has(row.mode)) continue;
@@ -330,7 +359,7 @@ export function makeStationsController({ map } = {}){
         const d = distanceMeters(center[0], center[1], row.lat, row.lon);
         if (d > radiusMeters) continue;
       }
-      const mk = L.marker([row.lat, row.lon], { icon: iconFor(row), title: row.name });
+      const mk = L.marker([row.lat, row.lon], { icon: iconFor(row, showName), title: row.name });
       mk.bindTooltip(tooltipHtml(row), { sticky: true, direction: "top" });
       mk.bindPopup(popupHtml(row));
       groups[row.mode].addLayer(mk);
@@ -346,12 +375,25 @@ export function makeStationsController({ map } = {}){
     }
   }
 
+  // Re-rendu à chaque changement de zoom (pour afficher/masquer les noms)
+  if (_map){
+    _map.on("zoomend", () => {
+      const z = _map.getZoom();
+      if (z !== currentZoom){
+        currentZoom = z;
+        addMarkersFor({}); // on rerend avec le nouveau showName
+      }
+    });
+  }
+
   return {
     async ensure({ modesWanted, center, radiusMeters } = {}){
       if (!all.length) all = await loadOnce();
+      if (_map) currentZoom = _map.getZoom();
       addMarkersFor({ modesWanted, center, radiusMeters });
     },
     refresh({ modesWanted, center, radiusMeters } = {}){
+      if (_map) currentZoom = _map.getZoom();
       addMarkersFor({ modesWanted, center, radiusMeters });
     },
     clear(){
