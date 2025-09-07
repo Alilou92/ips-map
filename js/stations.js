@@ -1,7 +1,6 @@
 // js/stations.js — contrôleur des gares/stations (IDFM + SNCF)
 // Lecture robuste des noms/lignes + couleurs par mode/ligne
 
-/* global L */
 import { distanceMeters } from "./util.js";
 
 // Bump si tu régénères data/stations.min.json
@@ -23,11 +22,7 @@ const METRO_COLORS = {
   "9":"#B0BD00","10":"#D6C178","11":"#704B1C","12":"#007852","13":"#99B4CB","14":"#662483"
 };
 const RER_COLORS = { A:"#E11E2B", B:"#0072BC", C:"#F6A800", D:"#2E7D32", E:"#8E44AD" };
-const TRAM_COLORS = {
-  T1:"#6F6F6F",T2:"#0096D7",T3:"#C77DB3","T3A":"#C77DB3","T3B":"#C77DB3",
-  T4:"#5BC2E7",T5:"#A9CC51",T6:"#00A36D",T7:"#E98300",T8:"#B1B3B3",
-  T9:"#C1002A",T10:"#6E4C9A",T11:"#575756",T12:"#0077C8",T13:"#008D36"
-};
+const TRAM_COLORS = { T1:"#6F6F6F",T2:"#0096D7",T3:"#C77DB3","T3A":"#C77DB3","T3B":"#C77DB3",T4:"#5BC2E7",T5:"#A9CC51",T6:"#00A36D",T7:"#E98300",T8:"#B1B3B3",T9:"#C1002A",T10:"#6E4C9A",T11:"#575756",T12:"#0077C8",T13:"#008D36" };
 const TRANSILIEN_COLORS = { H:"#0064B0", J:"#9D2763", L:"#5C4E9B", N:"#00936E", P:"#E2001A", U:"#6F2C91", K:"#2E3192", R:"#00A4A7" };
 
 // Couleurs par mode quand la ligne est inconnue (évite le gris)
@@ -47,7 +42,7 @@ const esc = (s) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;")
 function flatten(o){
   if (o && typeof o === "object" && o.properties && typeof o.properties === "object"){
     // GeoJSON Feature -> on remonte les props au niveau racine
-    return { ...o, ...o.properties };
+    return { ...o.properties, ...o, ...o.properties };
   }
   return o || {};
 }
@@ -189,8 +184,7 @@ function guessModeFromContext(row, nameU, lineU){
   return null;
 }
 
-// (paramètre inutilisé 'row' retiré)
-function extractLine(mode, rawLine, nameU){
+function extractLine(row, mode, rawLine, nameU){
   let L = normalizeLine(rawLine, mode);
   if (L) return L;
   if (mode === "rer"){ const m = nameU.match(/\bRER\s*([A-E])\b/); if (m) return m[1]; }
@@ -261,7 +255,7 @@ async function loadOnce(){
     if (!mode) continue; // on ignore sans mode fiable
 
     // ligne
-    const line = extractLine(mode, rawLine, nameU);
+    const line = extractLine(r, mode, rawLine, nameU);
 
     out.push({ name, mode, line, lat, lon });
   }

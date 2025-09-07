@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Fusionne des sources de stations (IDFM + SNCF) vers data/stations.min.json
+Fusionne des sources IDFM + SNCF vers data/stations.min.json
+et normalise: {name, mode, line?, lat, lon}
 
 Usage:
   python3 scripts/build_stations_json.py \
       data/stations_source.geojson \
       data/sncf_gares.geojson \
       data/stations.min.json
-
-- Le(s) premier(s) fichier(s) sont les sources (GeoJSON ou JSON FeatureCollection)
-- Le dernier argument est le fichier de sortie.
-
-Le script tente d'inférer correctement:
-  - le mode: metro / rer / tram / transilien / ter / tgv
-  - la ligne: pour metro, rer, tram, transilien
 """
 
 import json, sys, os, re
@@ -22,31 +16,27 @@ from collections import Counter
 
 ALLOWED_MODES = {"metro","rer","tram","transilien","ter","tgv"}
 
-# ────────────────────────── util ──────────────────────────
-
+# --- util JSON ---
 def load_json(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 
+# --- GeoJSON helpers ---
 def guess_latlon(geom):
-    """Retourne (lat, lon) depuis un GeoJSON Geometry (Point)."""
-    if not geom: return None, None
-    t = geom.get("type")
-    if t == "Point":
-        coords = geom.get("coordinates") or []
-        if len(coords) >= 2 and all(isinstance(x,(int,float)) for x in coords[:2]):
-            lon, lat = coords[0], coords[1]
-            return float(lat), float(lon)
-    # On ne gère pas les polygones: inutile pour les gares
+    """Retourne (lat, lon) si geometry=Point."""
+    if not isinstance(geom, dict): return None, None
+    if geom.get("type") != "Point": return None, None
+    coords = geom.get("coordinates") or []
+    if len(coords) >= 2 and all(isinstance(x,(int,float)) for x in coords[:2]):
+        lon, lat = coords[0], coords[1]
+        return float(lat), float(lon)
     return None, None
 
-def norm(s):
-    return ("" if s is None else str(s)).strip()
+def norm(s): return ("" if s is None else str(s)).strip()
 
+# --- détection mode / ligne ---
 def mode_key(s):
-    """
-    Normalise un texte → {metro,rer,tram,transilien,ter,tgv} ou None.
-    """
+    """Texte -> {metro,rer,tram,transilien,ter,tgv} (ou None)."""
     S = norm(s).lower()
     if not S: return None
     if S.startswith("met"): return "metro"
@@ -58,143 +48,180 @@ def mode_key(s):
     if "tgv" in S or "grande vitesse" in S or "lgv" in S: return "tgv"
     return None
 
-def extract_line(props, mode):
-    """
-    Essaie d'extraire un code de ligne (quand pertinent).
-    Retourne None si rien de fiable.
-    """
-    if not props: return None
-    cands = [
-        props.get("code_ligne"), props.get("ligne"), props.get("nom_ligne"),
-        props.get("line"), props.get("code"),
-        props.get("route_short_name"), props.get("route_id"),
-        props.get("indice_ligne"), props.get("route"), props.get("reseau_ligne")
-    ]
-    for c in cands:
-        if not c: continue
-        s = str(c).strip().upper()
+NAME_KEYS = [
+    # SNCF fréquents
+    "libelle_gare","nom_gare","nomlong","nom_long","appellation","appellation_longue",
+    # IDFM / divers
+    "name","nom","label","libelle","libellé","intitule","intitulé","stop_name",
+    "nom_station","zdl_nom","nom_zdl","nom_commune","nom_de_la_gare","gare","station"
+]
+CITY_KEYS = ["commune","ville","city","localite","locality","arrondissement","commune_principale"]
 
-        if mode == "metro":
-            m = re.search(r"(?:LIGNE|METRO|MÉTRO|M)?\s*([0-9]{1,2})\b", s)
-            if m: return m.group(1)
-            m = re.search(r"\b([37])\s*BIS\b", s)
-            if m: return "3BIS" if m.group(1) == "3" else "7BIS"
+LINE_KEYS = [
+    "line","ligne","nom_ligne","code_ligne","ligne_long","ligne_nom","ligne_code",
+    "indice_ligne","indice_lig","route_short_name","route_id","id_ligne","id_ref_ligne",
+    "reseau_ligne","code","libelle_ligne"
+]
 
-        if mode == "rer":
-            m = re.search(r"\b([A-E])\b", s)
-            if m: return m.group(1)
-
-        if mode == "tram":
-            m = re.search(r"\bT\s*([0-9]{1,2}[AB]?)\b", s)
-            if m: return "T" + m.group(1).upper()
-            m = re.search(r"\bTRAM\s*([0-9]{1,2}[AB]?)\b", s)
-            if m: return "T" + m.group(1).upper()
-
-        if mode == "transilien":
-            # "TRANSILIEN L", "LIGNE J", ou juste "J"
-            m = re.search(r"(?:LIGNE|TRANSILIEN)\s+([HJKLNRPU])\b", s)
-            if m: return m.group(1)
-            m = re.search(r"\b([HJKLNRPU])\b", s)
-            if m: return m.group(1)
-
+def first_non_empty(o, keys):
+    for k in keys:
+        if k in o and o[k] not in (None,""):
+            return o[k]
     return None
 
-def from_feature_list(features, source_hint=""):
-    """
-    Convertit une liste de Feature en lignes normalisées:
-      {name, mode, line?, lat, lon}
-    """
+def clean_name(raw):
+    s = norm(raw)
+    if not s: return ""
+    # enlève les préfixes/annot
+    s = re.sub(r"\bGare(?:\s+SNCF)?\s+(?:de|d’|d'|du|des)\s+", "", s, flags=re.I)
+    s = re.sub(r"^Gare\s+", "", s, flags=re.I)
+    s = re.sub(r"\s*\((?:RER|SNCF|Transilien|Métro|Metro|Tram|IDFM)[^)]+\)\s*", " ", s, flags=re.I)
+    s = re.sub(r"\s*[-–]\s*RER\s+[A-E]\b", "", s, flags=re.I)
+    s = re.sub(r"\s*[-–]\s*Ligne\s+[A-Z0-9]+$", "", s, flags=re.I)
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    return s
+
+def normalize_line(raw, mode):
+    S = norm(raw).upper()
+    if not S: return None
+    m = re.search(r"\bRER\s*([A-E])\b", S)
+    if m: return m.group(1)
+    if mode == "metro":
+        m = re.search(r"\b(?:M|MÉTRO|METRO|LIGNE)\s*([0-9]{1,2})\b", S)
+        if m: return m.group(1)
+        m = re.search(r"\b([37])\s*BIS\b", S)
+        if m: return "3BIS" if m.group(1)=="3" else "7BIS"
+    if mode == "tram":
+        m = re.search(r"\bT\s*([0-9]{1,2}[AB]?)\b", S) or re.search(r"\bTRAM\s*([0-9]{1,2}[AB]?)\b", S)
+        if m: return "T"+m.group(1).upper()
+    if mode == "transilien":
+        m = re.search(r"\b(?:LIGNE|TRANSILIEN)\s+([HJKLNRPU])\b", S) or re.search(r"\b([HJKLNRPU])\b", S)
+        if m: return m.group(1)
+    return None
+
+def guess_mode_from_context(props_text, name_u, line_u, has_sncf_markers):
+    if re.search(r"\bRER\b", name_u) or re.search(r"\bRER\b", line_u): return "rer"
+    if re.search(r"\b(?:M|MÉTRO|METRO)\s*\d{1,2}\b", name_u) or "METRO" in line_u: return "metro"
+    if re.search(r"\bT\s*\d{1,2}[AB]?\b", name_u) or "TRAM" in line_u: return "tram"
+    if has_sncf_markers:
+        if "TGV" in name_u or "TGV" in line_u: return "tgv"
+        if "TER" in name_u or "INTERCIT" in name_u or "INTERCITÉ" in name_u: return "ter"
+        return "transilien"
+    # heuristique via texte props concaténé
+    mk = mode_key(props_text)
+    return mk
+
+def extract_line_any(row, mode, raw_line, name_u):
+    L = normalize_line(raw_line, mode)
+    if L: return L
+    # récup depuis nom si pas trouvé
+    if mode == "rer":
+        m = re.search(r"\bRER\s*([A-E])\b", name_u);  return m.group(1) if m else None
+    if mode == "metro":
+        m = re.search(r"\b(?:M|MÉTRO|METRO)\s*([0-9]{1,2})\b", name_u)
+        if m: return m.group(1)
+        m = re.search(r"\b([37])\s*BIS\b", name_u)
+        if m: return "3BIS" if m.group(1)=="3" else "7BIS"
+    if mode == "tram":
+        m = re.search(r"\bT\s*([0-9]{1,2}[AB]?)\b", name_u)
+        if m: return "T"+m.group(1).upper()
+    if mode == "transilien":
+        m = re.search(r"\b([HJKLNRPU])\b", name_u)
+        if m: return m.group(1)
+    return None
+
+def props_text_blob(props):
+    parts = []
+    for k, v in (props or {}).items():
+        if v is None: continue
+        if isinstance(v, (list, tuple)): parts.extend([str(x) for x in v if x is not None])
+        else: parts.append(str(v))
+    return " ".join(parts).lower()
+
+def from_feature_list(features):
+    """Feature[] -> rows normalisées"""
     out = []
     for ft in features:
         if not isinstance(ft, dict): continue
         props = ft.get("properties") or {}
-        geom  = ft.get("geometry") or {}
-        lat, lon = guess_latlon(geom)
+        lat, lon = guess_latlon(ft.get("geometry"))
         if lat is None or lon is None: continue
 
-        # Détecter le mode
-        mode = None
+        # nom + ville
+        raw_name = first_non_empty(props, NAME_KEYS)
+        city = first_non_empty(props, CITY_KEYS)
 
-        # 1) champs directs
-        for k in ("mode","reseau","réseau","transport","network","mode_principal","type_transport"):
-            if k in props:
-                mode = mode_key(props[k])
-                if mode: break
+        # mode direct
+        mode_direct = mode_key(first_non_empty(props, ["mode","reseau","réseau","transport","network","mode_principal","type_transport"]))
+        # indice SNCF ?
+        has_sncf_marker = any(k in props for k in ("uic","code_uic","codeuic","voyageurs","idf_sncf","exploitant","gestionnaire"))
+        # ligne brute
+        raw_line = first_non_empty(props, LINE_KEYS)
 
-        # 2) concat indices textuels (SNCF/IDFM)
-        if not mode:
-            hint_parts = []
-            for k in (
-                "services","service","type","categorie","catégorie","label","libelle",
-                "libellé","intitule","intitulé","famille","famille_service","offre",
-                "description", "discriminant"
-            ):
-                v = props.get(k)
-                if v is None: continue
-                if isinstance(v, (list, tuple)):
-                    hint_parts.extend([str(x) for x in v if x is not None])
-                else:
-                    hint_parts.append(str(v))
-            hint_text = " ".join(hint_parts)
-            mode = mode_key(hint_text)
+        name_u = norm(raw_name).upper()
+        line_u = norm(raw_line).upper()
 
-        # Nom
-        name = (props.get("name") or props.get("nom") or props.get("label")
-                or props.get("libelle") or props.get("libellé") or "Gare").strip()
+        # si pas de mode, essaye via contexte
+        if not mode_direct:
+            mode_direct = guess_mode_from_context(
+                props_text_blob(props).upper(), name_u, line_u, has_sncf_marker
+            )
 
-        # Ligne si pertinent
-        line = None
-        if mode in ("metro","rer","tram","transilien"):
-            line = extract_line(props, mode)
+        # si toujours rien, on ne garde pas ce point
+        if not mode_direct or mode_direct not in ALLOWED_MODES:
+            continue
 
-        row = {
+        # ligne
+        line = extract_line_any(props, mode_direct, raw_line, name_u)
+
+        # nom final propre
+        name = clean_name(raw_name or "")
+        if not name:
+            # fallback
+            if raw_name: name = norm(raw_name)
+            if (not name or name.lower()=="gare") and city:
+                name = f"Gare de {norm(city)}"
+            if not name: name = "Gare"
+
+        out.append({
             "name": name,
-            "mode": mode or "",
+            "mode": mode_direct,
             "line": line,
             "lat": float(lat),
             "lon": float(lon),
-        }
-        out.append(row)
+        })
     return out
 
 def load_any(path):
-    """
-    Lit un GeoJSON (FeatureCollection) ou un JSON brut (liste de rows).
-    """
+    """Lit un GeoJSON FeatureCollection, une liste de Features, ou une liste de rows."""
     data = load_json(path)
-
-    # Déjà au bon format ?
-    if isinstance(data, list) and data and isinstance(data[0], dict) and "lat" in data[0] and "lon" in data[0]:
-        return data
-
-    # FeatureCollection ?
-    if isinstance(data, dict) and data.get("type") == "FeatureCollection" and isinstance(data.get("features"), list):
-        return from_feature_list(data["features"], source_hint=path)
-
-    # Liste de Features bruts ?
-    if isinstance(data, list) and data and isinstance(data[0], dict) and "type" in data[0]:
-        return from_feature_list(data, source_hint=path)
-
-    # Dernière chance
-    if isinstance(data, dict) and "features" in data:
-        return from_feature_list(data["features"], source_hint=path)
-
+    if isinstance(data, list):
+        if data and isinstance(data[0], dict) and "lat" in data[0] and "lon" in data[0]:
+            return data
+        if data and isinstance(data[0], dict) and "type" in data[0]:
+            return from_feature_list(data)
+    if isinstance(data, dict):
+        if data.get("type") == "FeatureCollection" and isinstance(data.get("features"), list):
+            return from_feature_list(data["features"])
+        if "features" in data and isinstance(data["features"], list):
+            return from_feature_list(data["features"])
     return []
 
 def dedupe(rows, precision=5):
-    """Déduplique grossièrement par (mode, name, lat/lon arrondis)."""
+    """Déduplique grossièrement par (mode, line, lat/lon arrondis) pour garder une bulle par ligne."""
     seen = set()
     out = []
     for r in rows:
-        key = (r.get("mode",""), (r.get("name","") or "").lower(),
-               round(float(r.get("lat",0)), precision),
-               round(float(r.get("lon",0)), precision))
+        key = (
+            r.get("mode",""),
+            (r.get("line") or "").upper(),
+            round(float(r.get("lat",0)), precision),
+            round(float(r.get("lon",0)), precision),
+        )
         if key in seen: continue
         seen.add(key)
         out.append(r)
     return out
-
-# ────────────────────────── main ──────────────────────────
 
 def main(argv):
     if len(argv) < 4:
@@ -202,6 +229,7 @@ def main(argv):
         sys.exit(1)
 
     *ins, out_path = argv[1:]
+
     all_rows = []
     for p in ins:
         if not os.path.exists(p):
@@ -210,42 +238,36 @@ def main(argv):
         rows = load_any(p)
         all_rows.extend(rows)
 
-    # Filtrage + heuristique SNCF pour TER/TGV au besoin
-    cleaned = []
+    # garde uniquement modes connus
+    cleaned = [r for r in all_rows if r.get("mode") in ALLOWED_MODES]
+
+    # seconde passe heuristique (si le mode est vide mais le nom dit TER/TGV)
+    fix = []
     for r in all_rows:
-        m = (r.get("mode") or "").strip().lower()
-        name_l = (r.get("name") or "").lower()
-
+        m = r.get("mode") or ""
         if m in ALLOWED_MODES:
-            cleaned.append(r)
             continue
-
-        # Heuristique si mode absent: deviner TER/TGV depuis le nom
+        name_l = (r.get("name") or "").lower()
         if "tgv" in name_l or "grande vitesse" in name_l or "lgv" in name_l:
-            r["mode"] = "tgv"
-            cleaned.append(r)
+            r["mode"] = "tgv"; fix.append(r)
         elif "intercité" in name_l or "intercites" in name_l or "intercités" in name_l or "ter" in name_l:
-            r["mode"] = "ter"
-            cleaned.append(r)
-        # Sinon on ignore l'entrée (mode non fiable)
+            r["mode"] = "ter"; fix.append(r)
+    cleaned.extend(fix)
 
-    # Dédupe
+    # dédoublonnage
     cleaned = dedupe(cleaned, precision=5)
 
-    # TER/TGV: pas de ligne par défaut
+    # pas de code de ligne pour TER/TGV
     for r in cleaned:
-        if r.get("mode") in ("ter","tgv"):
+        if r["mode"] in ("ter","tgv"):
             r["line"] = r.get("line") or None
 
-    # Sauvegarde minifiée
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    # sauvegarde minifiée
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(cleaned, f, ensure_ascii=False, separators=(",",":"))
 
-    # Stats
     cnt = Counter([r.get("mode","") for r in cleaned])
-    total = len(cleaned)
-    print(f"OK -> {out_path}  ({total} points)  par mode: {cnt}")
+    print(f"OK -> {out_path}  ({len(cleaned)} points)  par mode: {cnt}")
 
 if __name__ == "__main__":
     main(sys.argv)

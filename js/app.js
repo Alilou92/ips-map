@@ -3,7 +3,7 @@ import Store from "./store.js?v=23";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=2";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
-// ⬇️ bump de version pour forcer le cache-bust et correspondre au fichier corrigé
+// cache-bust + correspond au fichier stations corrigé
 import { makeStationsController } from "./stations.js?v=12";
 
 /* helpers */
