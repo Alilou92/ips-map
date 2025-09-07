@@ -1,21 +1,20 @@
 // js/util.js — helpers partagés (normalisation + distances)
 
-// Normalise une chaîne : enlève accents/diacritiques, met en minuscules et trim
+// Normalise : supprime les diacritiques, passe en minuscules, trim
 export function strip(input) {
   return String(input ?? "")
     .normalize("NFKD")
-    // supprime les marques diacritiques Unicode
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
     .trim();
 }
 
-// Conversion degrés → radians
+// degrés → radians
 export const deg2rad = (d) => (Number(d) * Math.PI) / 180;
 
-// Distance haversine en mètres entre (lat1,lon1) et (lat2,lon2)
+// Distance haversine en mètres
 export function distanceMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000; // rayon Terre (m)
+  const R = 6371000;
   const φ1 = deg2rad(lat1);
   const φ2 = deg2rad(lat2);
   const Δφ = deg2rad(lat2 - lat1);
@@ -29,6 +28,6 @@ export function distanceMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Petits utilitaires optionnels (inoffensifs si non utilisés ailleurs)
+// Petits utilitaires optionnels
 export const clamp = (n, min, max) => Math.min(max, Math.max(min, Number(n)));
 export const round1 = (n) => Math.round(Number(n) * 10) / 10;

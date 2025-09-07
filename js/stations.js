@@ -2,7 +2,6 @@
 // Lecture robuste des noms/lignes + couleurs par mode/ligne
 
 import { distanceMeters } from "./util.js?v=3";
-
 // Bump si tu régénères data/stations.min.json
 const DATA_VERSION = "12";
 
