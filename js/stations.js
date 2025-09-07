@@ -1,7 +1,5 @@
 // js/stations.js — contrôleur des gares/stations (IDFM + SNCF)
-// Badge coloré + nom visible (selon zoom) + tooltip/popup.
-// Couleur prioritaire = fournie par la source, sinon palette officielle.
-// Re-rendu auto à chaque changement de zoom pour afficher/masquer les noms.
+// Noms + couleurs corrects, étiquette permanente (zoom >= 13)
 
 import { distanceMeters } from "./util.js?v=3";
 
@@ -24,11 +22,7 @@ const METRO_COLORS = {
   "9":"#B0BD00","10":"#D6C178","11":"#704B1C","12":"#007852","13":"#99B4CB","14":"#662483"
 };
 const RER_COLORS = { A:"#E11E2B", B:"#0072BC", C:"#F6A800", D:"#2E7D32", E:"#8E44AD" };
-const TRAM_COLORS = {
-  T1:"#6F6F6F",T2:"#0096D7",T3:"#C77DB3","T3A":"#C77DB3","T3B":"#C77DB3",
-  T4:"#5BC2E7",T5:"#A9CC51",T6:"#00A36D",T7:"#E98300",T8:"#B1B3B3",T9:"#C1002A",
-  T10:"#6E4C9A",T11:"#575756",T12:"#0077C8",T13:"#008D36"
-};
+const TRAM_COLORS = { T1:"#6F6F6F",T2:"#0096D7",T3:"#C77DB3","T3A":"#C77DB3","T3B":"#C77DB3",T4:"#5BC2E7",T5:"#A9CC51",T6:"#00A36D",T7:"#E98300",T8:"#B1B3B3",T9:"#C1002A",T10:"#6E4C9A",T11:"#575756",T12:"#0077C8",T13:"#008D36" };
 const TRANSILIEN_COLORS = { H:"#0064B0", J:"#9D2763", L:"#5C4E9B", N:"#00936E", P:"#E2001A", U:"#6F2C91", K:"#2E3192", R:"#00A4A7" };
 
 // Couleurs par mode quand la ligne est inconnue
@@ -41,13 +35,16 @@ const DEFAULT_BY_MODE = {
   tgv: "#A1006B",
 };
 
+// zoom mini pour afficher les étiquettes permanentes
+const ZOOM_LABELS = 13;
+
 /* ───────── helpers ───────── */
 const esc = (s) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;")
   .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 
 function flatten(o){
   if (o && typeof o === "object" && o.properties && typeof o.properties === "object"){
-    // GeoJSON Feature -> remonte les props au niveau racine
+    // GeoJSON Feature -> on remonte les props au niveau racine
     return { ...o.properties, ...o, ...o.properties };
   }
   return o || {};
@@ -88,22 +85,17 @@ function normalizeLine(raw, mode) {
   const S = String(raw || "").toUpperCase();
   if (!S) return null;
 
-  // RER
   let m = S.match(/\bRER\s*([A-E])\b/);
   if (m) return m[1];
 
-  // Métro
   if (mode === "metro") {
-    m = S.match(/\b(?:M|MÉTRO|METRO)\s*([0-9]{1,2})\b/); if (m) return m[1];
+    m = S.match(/\b(?:M|MÉTRO|METRO|LIGNE)\s*([0-9]{1,2})\b/); if (m) return m[1];
     m = S.match(/\b([37])\s*BIS\b/); if (m) return m[1] === "3" ? "3BIS" : "7BIS";
-    m = S.match(/\bM\s*([0-9]{1,2})\b/); if (m) return m[1];
   }
-  // Tram
   if (mode === "tram") {
-    m = S.match(/\bT\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1].toUpperCase()}`;
-    m = S.match(/\bTRAM\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1].toUpperCase()}`;
+    m = S.match(/\bT\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1]}`;
+    m = S.match(/\bTRAM\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1]}`;
   }
-  // Transilien
   if (mode === "transilien") {
     m = S.match(/\b(?:LIGNE|TRANSILIEN)\s+([HJKLNRPU])\b/); if (m) return m[1];
     m = S.match(/\b([HJKLNRPU])\b/); if (m) return m[1];
@@ -156,46 +148,17 @@ function badgeText(mode, line){
   if (m === "metro")      return l || "M";
   if (m === "rer")        return l ? `RER ${l}` : "RER";
   if (m === "tram")       return l || "T";
-  if (m === "transilien") return l || "H"; // valeur par défaut visuelle
+  if (m === "transilien") return l || "TN";
   return (MODE_LABEL[m] || m || "?").toUpperCase();
 }
 
-/* ───────── rendu icône ─────────
-   - Badge coloré + (option) nom à côté si zoom >= 14
-   - Pour limiter le bruit visuel, le nom s'affiche à partir d'un certain zoom. */
-function iconHtml(row, showName){
+function iconFor(row) {
   const color = colorFor(row.mode, row.line, row.colorHex);
-  const btxt  = esc(badgeText(row.mode, row.line));
-  const name  = esc(row.name);
-
-  return `
-  <div style="display:inline-flex;align-items:center;gap:.35rem;">
-    <div style="
-      display:inline-flex;align-items:center;justify-content:center;
-      height:20px;min-width:22px;padding:0 .35em;border-radius:10px;
-      background:${color};color:#fff;font-weight:700;font-size:11px;line-height:18px;
-      border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)">
-      ${btxt}
-    </div>
-    ${showName ? `<div style="background:#fff;border-radius:6px;padding:1px 6px;
-                    font-size:11px;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.15);
-                    border:1px solid rgba(0,0,0,.08);white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;">
-                    ${name}
-                  </div>` : ``}
-  </div>`;
+  const html = `<div style="width:14px;height:14px;border-radius:50%;background:${color};
+    border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)"></div>`;
+  return L.divIcon({ className: "stn", html, iconSize: [18,18], iconAnchor: [9,9] });
 }
 
-function iconFor(row, showName) {
-  return L.divIcon({
-    className: "stn",
-    html: iconHtml(row, showName),
-    iconSize: [28, 22],
-    iconAnchor: [14, 11], // centré
-    tooltipAnchor: [0, -12]
-  });
-}
-
-/* ───────── tooltips/popups ───────── */
 function tooltipHtml(row){
   const color = colorFor(row.mode, row.line, row.colorHex);
   const btxt = badgeText(row.mode, row.line);
@@ -205,12 +168,18 @@ function tooltipHtml(row){
     row.mode === "tram" && row.line ? ` — Tram ${row.line.replace(/^T/i,"")}` :
     row.mode === "transilien" && row.line ? ` — Ligne ${row.line}` : "";
 
-  return `<div style="display:flex;align-items:center;gap:.5rem;line-height:1.2;">
-    <span style="display:inline-block;min-width:1.8em;padding:.1em .45em;border-radius:1em;
-      background:${color};color:#fff;font-weight:700;font-size:.85em;text-align:center">${esc(btxt)}</span>
-    <span style="font-weight:600">${esc(row.name)}</span>
+  return `<div class="station-tt">
+    <span class="station-badge" style="background:${color}">${esc(btxt)}</span>
+    <span class="station-name">${esc(row.name)}</span>
     <span style="opacity:.85">${esc(suffix)}</span>
   </div>`;
+}
+
+function nameLabelHtml(row){
+  const color = colorFor(row.mode, row.line, row.colorHex);
+  const btxt = badgeText(row.mode, row.line);
+  return `<span class="stn-badge" style="background:${color}">${esc(btxt)}</span>
+          <span class="station-name">${esc(row.name)}</span>`;
 }
 
 function popupHtml(row){
@@ -252,13 +221,12 @@ function guessModeFromContext(row, nameU, lineU){
 }
 
 function extractLine(row, mode, rawLine, nameU){
-  let L = normalizeLine(rawLine, mode);
-  if (L) return L;
+  let Lx = normalizeLine(rawLine, mode);
+  if (Lx) return Lx;
   if (mode === "rer"){ const m = nameU.match(/\bRER\s*([A-E])\b/); if (m) return m[1]; }
   if (mode === "metro"){
     let m = nameU.match(/\b(?:M|MÉTRO|METRO)\s*([0-9]{1,2})\b/); if (m) return m[1];
     m = nameU.match(/\b([37])\s*BIS\b/); if (m) return m[1]==="3"?"3BIS":"7BIS";
-    m = nameU.match(/\bM\s*([0-9]{1,2})\b/); if (m) return m[1];
   }
   if (mode === "tram"){ const m = nameU.match(/\bT\s*([0-9]{1,2}[AB]?)\b/); if (m) return `T${m[1].toUpperCase()}`; }
   if (mode === "transilien"){ const m = nameU.match(/\b([HJKLNRPU])\b/); if (m) return m[1]; }
@@ -320,7 +288,7 @@ async function loadOnce(){
     const rawLine = firstNonEmptyRow(r, LINE_KEYS);
     const lineU = String(rawLine || "").toUpperCase();
     if (!mode) mode = guessModeFromContext(r, nameU, lineU) || null;
-    if (!mode) continue;
+    if (!mode) continue; // ignore sans mode
 
     const line = extractLine(r, mode, rawLine, nameU);
 
@@ -339,19 +307,53 @@ async function loadOnce(){
 /* ───────── contrôleur ───────── */
 export function makeStationsController({ map } = {}){
   const _map = map || null;
+
+  // Groupes de couches pour markers + étiquettes par mode
   const groups = {
-    metro: L.layerGroup(), rer: L.layerGroup(), tram: L.layerGroup(),
-    transilien: L.layerGroup(), ter: L.layerGroup(), tgv: L.layerGroup(),
+    markers: {
+      metro: L.layerGroup(), rer: L.layerGroup(), tram: L.layerGroup(),
+      transilien: L.layerGroup(), ter: L.layerGroup(), tgv: L.layerGroup(),
+    },
+    labels: {
+      metro: L.layerGroup(), rer: L.layerGroup(), tram: L.layerGroup(),
+      transilien: L.layerGroup(), ter: L.layerGroup(), tgv: L.layerGroup(),
+    }
   };
+
   let all = [];
-  let currentZoom = _map ? _map.getZoom() : 0;
+  let lastWanted = new Set(Object.keys(groups.markers));
 
-  function addMarkersFor({ modesWanted, center, radiusMeters } = {}){
-    for (const k of Object.keys(groups)) groups[k].clearLayers();
-    const wanted = modesWanted instanceof Set ? modesWanted : new Set(Object.keys(groups));
+  function attachOrRemoveLayers(wanted){
+    // markers toujours visibles (par mode)
+    for (const m of Object.keys(groups.markers)){
+      const layer = groups.markers[m];
+      const shouldShow = wanted.has(m) && layer.getLayers().length > 0;
+      if (_map){
+        if (shouldShow && !_map.hasLayer(layer)) layer.addTo(_map);
+        if (!shouldShow && _map.hasLayer(layer)) _map.removeLayer(layer);
+      }
+    }
+    // labels uniquement si zoom suffisant
+    const showLabels = _map ? _map.getZoom() >= ZOOM_LABELS : false;
+    for (const m of Object.keys(groups.labels)){
+      const layer = groups.labels[m];
+      const shouldShow = showLabels && wanted.has(m) && layer.getLayers().length > 0;
+      if (_map){
+        if (shouldShow && !_map.hasLayer(layer)) layer.addTo(_map);
+        if (!shouldShow && _map.hasLayer(layer)) _map.removeLayer(layer);
+      }
+    }
+  }
+
+  function rebuild({ modesWanted, center, radiusMeters } = {}){
+    // reset
+    for (const k of Object.keys(groups.markers)) groups.markers[k].clearLayers();
+    for (const k of Object.keys(groups.labels))  groups.labels[k].clearLayers();
+
+    const wanted = modesWanted instanceof Set ? modesWanted : new Set(Object.keys(groups.markers));
+    lastWanted = wanted;
+
     const filterByRadius = Array.isArray(center) && Number.isFinite(radiusMeters) && radiusMeters > 0;
-
-    const showName = currentZoom >= 14; // ← nom visible à partir du zoom 14
 
     for (const row of all){
       if (!wanted.has(row.mode)) continue;
@@ -359,47 +361,51 @@ export function makeStationsController({ map } = {}){
         const d = distanceMeters(center[0], center[1], row.lat, row.lon);
         if (d > radiusMeters) continue;
       }
-      const mk = L.marker([row.lat, row.lon], { icon: iconFor(row, showName), title: row.name });
+
+      // Marqueur coloré
+      const mk = L.marker([row.lat, row.lon], { icon: iconFor(row) });
       mk.bindTooltip(tooltipHtml(row), { sticky: true, direction: "top" });
       mk.bindPopup(popupHtml(row));
-      groups[row.mode].addLayer(mk);
+      groups.markers[row.mode].addLayer(mk);
+
+      // Étiquette permanente (nom + badge) — on l'ajoute dans le groupe "labels"
+      const label = L.tooltip({
+        permanent: true,
+        className: "stn-name",
+        direction: "top",
+        offset: [0, -16],
+        opacity: 1
+      })
+      .setLatLng([row.lat, row.lon])
+      .setContent(nameLabelHtml(row));
+
+      groups.labels[row.mode].addLayer(label);
     }
 
-    if (_map){
-      for (const m of Object.keys(groups)){
-        const layer = groups[m];
-        const shouldShow = wanted.has(m) && layer.getLayers().length > 0;
-        if (shouldShow && !_map.hasLayer(layer)) layer.addTo(_map);
-        if (!shouldShow && _map.hasLayer(layer)) _map.removeLayer(layer);
-      }
-    }
+    attachOrRemoveLayers(wanted);
   }
 
-  // Re-rendu à chaque changement de zoom (pour afficher/masquer les noms)
+  // mise à jour des labels au zoom
   if (_map){
-    _map.on("zoomend", () => {
-      const z = _map.getZoom();
-      if (z !== currentZoom){
-        currentZoom = z;
-        addMarkersFor({}); // on rerend avec le nouveau showName
-      }
-    });
+    _map.on("zoomend", () => attachOrRemoveLayers(lastWanted));
   }
 
   return {
     async ensure({ modesWanted, center, radiusMeters } = {}){
       if (!all.length) all = await loadOnce();
-      if (_map) currentZoom = _map.getZoom();
-      addMarkersFor({ modesWanted, center, radiusMeters });
+      rebuild({ modesWanted, center, radiusMeters });
     },
     refresh({ modesWanted, center, radiusMeters } = {}){
-      if (_map) currentZoom = _map.getZoom();
-      addMarkersFor({ modesWanted, center, radiusMeters });
+      rebuild({ modesWanted, center, radiusMeters });
     },
     clear(){
-      for (const k of Object.keys(groups)){
-        groups[k].clearLayers();
-        if (_map && _map.hasLayer(groups[k])) _map.removeLayer(groups[k]);
+      for (const k of Object.keys(groups.markers)){
+        groups.markers[k].clearLayers();
+        if (_map && _map.hasLayer(groups.markers[k])) _map.removeLayer(groups.markers[k]);
+      }
+      for (const k of Object.keys(groups.labels)){
+        groups.labels[k].clearLayers();
+        if (_map && _map.hasLayer(groups.labels[k])) _map.removeLayer(groups.labels[k]);
       }
     }
   };
