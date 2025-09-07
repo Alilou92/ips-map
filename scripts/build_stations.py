@@ -194,10 +194,12 @@ def normalize_line_from_short(mode: str, short_name: str) -> Optional[str]:
     s = (short_name or "").upper().strip()
     if not s: return None
     if mode == "metro":
+        # 3bis / 7bis : accepte 3B, 7B, 3 BIS, 7 BIS
+        m = re.match(r"^(?:M)?\s*(3|7)\s*(?:B|BIS)$", s, re.I)
+        if m: return f"{m.group(1)}BIS"
+        # nombres classiques (M12, 12, 07…)
         m = re.match(r"^(?:M)?\s*0*([0-9]{1,2})$", s)
         if m: return m.group(1)
-        m = re.match(r"^(?:M)?\s*(3|7)\s*BIS$", s)
-        if m: return "3BIS" if m.group(1) == "3" else "7BIS"
     if mode == "tram":
         m = re.match(r"^(?:T)?\s*([0-9]{1,2}[AB]?)$", s)
         if m: return f"T{m.group(1)}"
@@ -208,6 +210,26 @@ def normalize_line_from_short(mode: str, short_name: str) -> Optional[str]:
         m = re.match(r"^[HJKLNRPU]$", s)
         if m: return m.group(0)
     return None
+
+def normalize_line(raw: str, mode: str) -> Optional[str]:
+    if not raw: return None
+    S = str(raw).upper()
+    m = re.search(r"\bRER\s*([A-E])\b", S)
+    if m: return m.group(1)
+    if mode == "metro":
+        # 3bis / 7bis si écrit « 3B » / « 7B » / « 3 BIS » / « 7 BIS »
+        m = re.search(r"\b([37])\s*(?:B|BIS)\b", S)
+        if m: return f"{m.group(1)}BIS"
+        m = re.search(r"\b(?:M|MÉTRO|METRO|LIGNE)\s*([0-9]{1,2})\b", S)
+        if m: return m.group(1)
+    if mode == "tram":
+        m = re.search(r"\bT\s*([0-9]{1,2}[AB]?)\b", S) or re.search(r"\bTRAM\s*([0-9]{1,2}[AB]?)\b", S)
+        if m: return f"T{m.group(1)}"
+    if mode == "transilien":
+        m = re.search(r"\b(?:LIGNE|TRANSILIEN)\s+([HJKLNRPU])\b", S) or re.search(r"\b([HJKLNRPU])\b", S)
+        if m: return m.group(1)
+    return None
+
 
 def deduce_mode_from_route(route_type: str, short_name: str, long_name: str = "") -> Optional[str]:
     """

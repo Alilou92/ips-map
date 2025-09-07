@@ -4,7 +4,7 @@
 import { distanceMeters } from "./util.js?v=3";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "20";
+const DATA_VERSION = "21";
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
