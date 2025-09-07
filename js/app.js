@@ -3,7 +3,8 @@ import Store from "./store.js?v=23";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=3";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
-import { makeStationsController } from "./stations.js?v=13";
+// ⬇️ importe la nouvelle version du contrôleur (cache-bust)
+import { makeStationsController } from "./stations.js?v=14";
 
 /* helpers */
 function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }
