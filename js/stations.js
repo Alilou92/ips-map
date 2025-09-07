@@ -262,6 +262,16 @@ async function loadOnce(){
 
   _rowsCache = out;
   console.debug(`[Stations] prêtes: ${out.length}`);
+
+  // Alerte si données incomplètes
+  if (_rowsCache.length) {
+    const miss = _rowsCache.filter(r => !r.line).length;
+    const bad = _rowsCache.filter(r => (r.name||'').trim().toLowerCase()==='gare').length;
+    if (miss/_rowsCache.length > 0.5 || bad/_rowsCache.length > 0.5) {
+      console.warn('[Stations] Données incomplètes: trop de stations sans "line" ou avec "name=Gare". Vérifie data/stations.min.json');
+    }
+  }
+
   return _rowsCache;
 }
 

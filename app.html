@@ -9,14 +9,13 @@
   <link rel="icon" type="image/svg+xml"
         href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%230f1320"/><text x="50%" y="52%" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="28" fill="%234ea1ff">IPS</text></svg>'>
 
-  <!-- CSS principal (cache-bust) -->
+  <!-- CSS principal -->
   <link rel="stylesheet" href="./assets/style.css?v=32" />
 
-  <!-- Leaflet (HTTPS) -->
+  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 
-  <!-- Garde pour la hauteur de carte, utile sur mobile avant que JS n'ajuste -->
   <style>
     #map { min-height: 320px; }
     .visually-hidden {
@@ -119,10 +118,10 @@
     <div style="margin-top:6px">Gris = non publié</div>
   </div>
 
-  <!-- Optionnel : version globale accessible par les scripts -->
+  <!-- Version globale pour cache-bust des données -->
   <script>window.APP_VERSION = '31';</script>
 
-  <!-- JS principal (cache-bust) -->
+  <!-- JS principal -->
   <script type="module" src="./js/app.js?v=2025-09-05-2"></script>
 </body>
 </html>
