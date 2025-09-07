@@ -1,13 +1,9 @@
-// js/app.js
+// js/app.js — recherche + filtres + stations IDFM/SNCF
 import Store from "./store.js?v=23";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=3";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
-// ⬇️ passe v=18
-import { makeStationsController } from "./stations.js?v=18";
-
-/* …le reste de ton fichier inchangé… */
-
+import { makeStationsController } from "./stations.js?v=17";
 
 /* helpers */
 function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }
@@ -174,6 +170,7 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   let items = Store.around(lat, lon, radiusKm * 1000, sectorFilter, typesWanted);
 
+  // élargit si vide
   let triedKm = radiusKm;
   if (!items.length && radiusKm < 2){
     triedKm = 2;
@@ -188,13 +185,14 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
     items = Store.around(lat, lon, 3000, sectorFilter, typesWanted);
   }
 
+  // mémorise le rayon pour les stations
   lastRadiusMeters = triedKm * 1000;
 
   const src = L.marker([lat, lon], {
     icon: L.divIcon({ className: 'src', html: '<div class="src-pin">A</div>' })
   }).bindPopup(`<strong>Adresse/ville</strong><div>${label}</div>`).addTo(markersLayer);
 
-  // ➜ Afficher les transports dans la zone, même si aucun établissement
+  // affiche les transports dans la zone, même si aucun établissement
   await Stations.ensure({
     modesWanted: getModesWanted(),
     center: [lat, lon],

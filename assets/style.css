@@ -14,7 +14,7 @@
   --top-fg:#e5ecf6;
   --top-field:#0d1320;
   --top-bd:#243149;
-  --top-h:52px;         /* hauteur approx. de la barre */
+  --top-h:52px;
 }
 
 *{box-sizing:border-box}
@@ -32,7 +32,7 @@ body{
   gap:10px;
   align-items:center;
   padding:8px 12px;
-  background:var(--top-bg) !important;  /* ✅ garde le fond sombre */
+  background:var(--top-bg) !important;
   color:var(--top-fg);
   border-bottom:1px solid #1e2637;
   position:sticky;
@@ -68,7 +68,7 @@ body{
 }
 #map{
   height:calc(100vh - var(--top-h));
-  min-height:320px; /* fallback */
+  min-height:320px;
 }
 
 /* ——— Bandeau info/erreur ——— */
@@ -139,36 +139,15 @@ body{
 .chip-public{ background:#1b7f36; }
 .chip-prive{  background:#6f42c1; }
 
-/* ——— Stations (markers/tooltip) ——— */
-.stn { pointer-events:auto; }
-.stn .stn-dot{
-  width:14px;height:14px;border-radius:50%;
-  border:2px solid #0f1320;background:#fff;
-  box-shadow:0 0 0 2px rgba(0,0,0,.15);
-}
-.stn-metro .stn-dot      { border-color:#1E90FF; } /* métro */
-.stn-rer .stn-dot        { border-color:#111;    } /* RER   */
-.stn-transilien .stn-dot { border-color:#2c8b2c; } /* TN    */
-.stn-ter .stn-dot        { border-color:#88aa55; }
-.stn-tgv .stn-dot        { border-color:#b03a9b; }
-
-.station-tt{
-  display:inline-flex;align-items:center;gap:.5rem;line-height:1.2;
-}
-.station-badge{
-  display:inline-block;min-width:1.8em;padding:.15em .45em;
-  border-radius:1em;color:#fff;font-weight:700;font-size:.85em;text-align:center;
-}
-.station-name{ font-weight:500; }
-
-/* Tooltips Leaflet plus sombres (général) */
+/* ——— Stations (tooltips & labels) ——— */
+/* Tooltips sombres (général) */
 .leaflet-tooltip{
   background:rgba(0,0,0,.80);
   color:#fff;border:0;border-radius:4px;padding:6px 8px;
   box-shadow:0 2px 8px rgba(0,0,0,.25);
 }
 
-/* ——— ÉTIQUETTES PERMANENTES DES GARES (noms + badge) ——— */
+/* Étiquette permanente (nom + badge), ajoutée par stations.js (zoom >= 13) */
 .leaflet-tooltip.stn-name{
   background:rgba(255,255,255,0.92);
   color:#111;
@@ -197,8 +176,8 @@ body{
     min-height:auto;
   }
   #map{
-    height:auto;         /* la vraie hauteur est fixée par JS */
-    min-height:50vh;     /* fallback si JS n’a pas encore tourné */
+    height:auto;
+    min-height:50vh;
   }
   #sidebar{
     max-height:45vh; overflow:auto;
