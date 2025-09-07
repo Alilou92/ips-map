@@ -1,9 +1,10 @@
-// js/app.js — recherche + filtres + stations IDFM/SNCF
-import Store from "./store.js?v=24"; // { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=2";
+// js/app.js
+import Store from "./store.js?v=23";
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=3";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";
-// cache-bust + correspond au fichier stations corrigé
 import { makeStationsController } from "./stations.js?v=12";
+
 
 /* helpers */
 function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }

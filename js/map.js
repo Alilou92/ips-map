@@ -1,80 +1,92 @@
-// js/map.js — création de la carte + helpers de markers
+// js/map.js — Leaflet helpers (fond HTTPS + utilitaires)
+import { round1 } from "./util.js?v=3";
 
-/* Init de la carte + couche OSM en HTTPS */
+/* ---------- fond de carte ---------- */
+const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const TILE_ATTR =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+/* ---------- icônes et couleurs ---------- */
+function colorForIps(ips) {
+  if (!Number.isFinite(ips)) return "#9aa2ad";   // gris si IPS inconnu
+  if (ips < 90)  return "#ef4444";               // rouge
+  if (ips <= 110) return "#f59e0b";              // orange
+  return "#10b981";                               // vert
+}
+
+function makeDot(color, size = 16, whiteRing = true) {
+  const ring = whiteRing ? 'border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35);' : '';
+  const html = `<div style="width:${size}px;height:${size}px;border-radius:50%;
+                 background:${color};${ring}"></div>`;
+  return L.divIcon({ className: "pin", html, iconSize: [size, size], iconAnchor: [size/2, size/2] });
+}
+
+/* ---------- exports ---------- */
 export function initMap() {
   const map = L.map("map", {
+    center: [48.8566, 2.3522],
+    zoom: 12,
     zoomControl: true,
-    scrollWheelZoom: true,
-    preferCanvas: false
-  }).setView([48.846, 2.355], 13); // Paris par défaut
+    preferCanvas: true
+  });
 
-  // IMPORTANT : tuile OSM en HTTPS
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    subdomains: ["a", "b", "c"],
-    maxZoom: 20,
-    crossOrigin: true,
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  L.tileLayer(TILE_URL, {
+    attribution: TILE_ATTR,
+    maxZoom: 19,
+    crossOrigin: true
   }).addTo(map);
 
+  // couche unique pour les markers des établissements
   const markersLayer = L.layerGroup().addTo(map);
+
   return { map, markersLayer };
 }
 
-/* Cercle d'adresse (rayon en mètres) */
 export function drawAddressCircle(map, lat, lon, radiusMeters) {
   const circle = L.circle([lat, lon], {
     radius: radiusMeters,
-    color: "#3b82f6",
+    color: "#60a5fa",
     weight: 2,
-    fillColor: "#60a5fa",
-    fillOpacity: 0.09
+    fillColor: "#93c5fd",
+    fillOpacity: 0.15
   }).addTo(map);
   return circle;
 }
 
-/* Marker établissement coloré selon l'IPS */
-function colorForIPS(ips) {
-  if (ips == null || !Number.isFinite(+ips)) return "#a3a3a3"; // gris = non publié
-  const v = +ips;
-  if (v < 90) return "#e11d48";      // défavorisé
-  if (v <= 110) return "#f59e0b";    // moyen
-  return "#16a34a";                  // favorisé
-}
+export function markerFor(f, ipsMap) {
+  // f = { lat, lon, uai, type, name, commune, secteur }
+  const ips = ipsMap instanceof Map ? ipsMap.get(String(f.uai || "").toUpperCase()) : undefined;
+  const col = colorForIps(ips);
+  const icon = makeDot(col, 16);
 
-/* Marker pour un établissement (école/collège/lycée) */
-export function markerFor(f, ipsMap /* Map(uai -> ips) */) {
-  const ips = ipsMap instanceof Map ? ipsMap.get(f.uai) : f.ips;
-  const color = colorForIPS(ips);
+  const m = L.marker([f.lat, f.lon], { icon });
 
-  const icon = L.divIcon({
-    className: "sch",
-    html: `<div style="width:18px;height:18px;border-radius:50%;
-            background:${color};border:2px solid #fff;
-            box-shadow:0 0 0 1px rgba(0,0,0,.35)"></div>`,
-    iconSize: [20, 20],
-    iconAnchor: [10, 10]
-  });
+  const typeHuman = f.type === "ecole" ? "École"
+                   : f.type === "college" ? "Collège"
+                   : f.type === "lycee" ? "Lycée" : "Établissement";
 
-  const name = f.name || f.nom || f.etab || "Établissement";
-  const type = f.type || f.categorie || "";
-  const comm = f.commune || f.ville || "";
+  const ipsTxt = Number.isFinite(ips) ? round1(ips).toFixed(1) : "—";
+  const sec = f.secteur ?? "—";
+  const commune = f.commune ? ` — ${f.commune}` : "";
 
-  const m = L.marker([f.lat, f.lon], { icon })
-    .bindTooltip(`${name}`, { sticky: true, direction: "top" })
-    .bindPopup(
-      `<div style="font-weight:700">${name}</div>
-       <div style="opacity:.85">${type}${comm ? " — " + comm : ""}</div>
-       <div>IPS : ${ips != null ? Number(ips).toFixed(1) : "non publié"}</div>`
-    );
+  m.bindPopup(
+    `<div style="line-height:1.35">
+      <div style="font-weight:700;margin-bottom:.25rem">${typeHuman}${commune}</div>
+      <div>${(f.name ?? "").toString()}</div>
+      <div style="opacity:.85">IPS : <strong>${ipsTxt}</strong> • Secteur : ${sec} • UAI : ${f.uai ?? "—"}</div>
+    </div>`
+  );
 
   return m;
 }
 
-/* Fit carte aux éléments (items: {lat,lon}) */
 export function fitToMarkers(map, items) {
-  const pts = (items || []).filter(x => Number.isFinite(x.lat) && Number.isFinite(x.lon));
-  if (!pts.length) return;
-  const b = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
-  map.fitBounds(b.pad(0.08), { animate: true });
+  const coords = (items || [])
+    .map(x => (Array.isArray(x) ? x : [x.lat, x.lon]))
+    .filter(p => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (!coords.length) return;
+  const b = L.latLngBounds(coords.map(([la, lo]) => L.latLng(la, lo)));
+  try { map.fitBounds(b.pad(0.15), { animate: true }); } catch {}
 }
+
+export default { initMap, drawAddressCircle, markerFor, fitToMarkers };
