@@ -21,6 +21,93 @@ function makeDot(color, size = 16, whiteRing = true) {
   return L.divIcon({ className: "pin", html, iconSize: [size, size], iconAnchor: [size/2, size/2] });
 }
 
+/* ---------- Exam helpers (Brevet / Bac général / Bac pro) ---------- */
+
+// parse un nombre "92,5" / "92.5" / 92 -> 92.5
+function num(x){
+  if (x == null) return null;
+  const n = Number(String(x).replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+// Devine quel examen afficher pour l’établissement
+function inferExamKind(f){
+  const t = String(f.type || "").toLowerCase();
+  if (t === "college") return "brevet";
+  if (t === "lycee"){
+    const hay = (f.appellation || f.libelle || f.nature || f.name || "").toLowerCase();
+    // LP / professionnel / pro / LEP…
+    if (/\b(professionnel|pro|lp|lep)\b/.test(hay)) return "bac_pro";
+    return "bac_general";
+  }
+  return null;
+}
+
+/**
+ * Récupère { current, previous, national } pour un kind ∈ {brevet|bac_general|bac_pro}
+ * Accepté :
+ *  - f.exam?.<kind> = { current, previous, national }
+ *  - f.<kind>_rate / _prev / _nat
+ *  - f.taux_<kind> / _n_1 / _nat
+ */
+function pickExamNumbers(f, kind){
+  // 1) structure groupée
+  const grp = f.exam && f.exam[kind];
+  let cur = grp && num(grp.current);
+  let prev = grp && num(grp.previous);
+  let nat = grp && num(grp.national);
+
+  // 2) variantes “à plat”
+  const bases = {
+    brevet:      ["brevet","dnb","taux_brevet"],
+    bac_general: ["bac_general","bac_gen","taux_bac_general","bac"],
+    bac_pro:     ["bac_pro","bacpro","taux_bac_pro"]
+  }[kind];
+
+  for (const b of (bases || [])){
+    cur  ??= num(f[`${b}`]) ?? num(f[`${b}_rate`]) ?? num(f[`taux_${b}`]);
+    prev ??= num(f[`${b}_prev`]) ?? num(f[`${b}_n_1`]) ?? num(f[`taux_${b}_n_1`]);
+    nat  ??= num(f[`${b}_nat`]) ?? num(f[`moy_${b}_nat`]) ?? num(f[`national_${b}`]);
+  }
+
+  if (cur == null || prev == null || nat == null) return null;
+  return { current: cur, previous: prev, national: nat };
+}
+
+/** HTML à insérer sous l’IPS (ou "" si données absentes) */
+function examResultHtml(f){
+  const kind = inferExamKind(f);
+  if (!kind) return "";
+
+  const data = pickExamNumbers(f, kind);
+  if (!data) return "";
+
+  const cur = data.current;
+  const prev = data.previous;
+  const nat = data.national;
+
+  const delta = cur - prev;
+  const aboveNat = cur >= nat;
+
+  const colorMain = aboveNat ? "#10b981" : "#ef4444";   // vert / rouge
+  const colorDiff = delta >= 0 ? "#10b981" : "#ef4444"; // vert / rouge
+  const sign = delta >= 0 ? "+" : "−";
+
+  const label =
+    kind === "brevet"      ? "Brevet (taux de réussite)" :
+    kind === "bac_general" ? "Bac général (taux de réussite)" :
+                              "Bac pro (taux de réussite)";
+
+  return `
+    <div class="meta" style="margin-top:2px">
+      <span>${label} :</span>
+      <strong style="color:${colorMain}">${cur.toFixed(1)}%</strong>
+      <span style="opacity:.8">— moy. nat. ${nat.toFixed(1)}%</span>
+      <span style="margin-left:6px;color:${colorDiff}">${sign}${Math.abs(delta).toFixed(1)} pt vs N-1</span>
+    </div>
+  `;
+}
+
 /* ---------- exports ---------- */
 export function initMap() {
   const map = L.map("map", {
@@ -54,7 +141,7 @@ export function drawAddressCircle(map, lat, lon, radiusMeters) {
 }
 
 export function markerFor(f, ipsMap) {
-  // f = { lat, lon, uai, type, name, commune, secteur }
+  // f = { lat, lon, uai, type, name, commune, secteur, ...exam fields }
   const ips = ipsMap instanceof Map ? ipsMap.get(String(f.uai || "").toUpperCase()) : undefined;
   const col = colorForIps(ips);
   const icon = makeDot(col, 16);
@@ -69,11 +156,15 @@ export function markerFor(f, ipsMap) {
   const sec = f.secteur ?? "—";
   const commune = f.commune ? ` — ${f.commune}` : "";
 
+  // nouvelle ligne “examens”
+  const examLine = examResultHtml(f);
+
   m.bindPopup(
     `<div style="line-height:1.35">
       <div style="font-weight:700;margin-bottom:.25rem">${typeHuman}${commune}</div>
       <div>${(f.name ?? "").toString()}</div>
       <div style="opacity:.85">IPS : <strong>${ipsTxt}</strong> • Secteur : ${sec} • UAI : ${f.uai ?? "—"}</div>
+      ${examLine}
     </div>`
   );
 

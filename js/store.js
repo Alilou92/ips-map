@@ -1,8 +1,8 @@
-// js/store.js — secteur canonisé ("Public"/"Privé") + filtre robuste
+// js/store.js — secteur canonisé ("Public"/"Privé") + filtre robuste + stats examens
 import { strip, distanceMeters } from "./util.js?v=3";
 
 /** Cache-bust pour les JSON statiques */
-const DATA_VERSION = "23";
+const DATA_VERSION = "24";
 
 /* ---------- utils ---------- */
 const toNum = (x) => (x === null || x === undefined || x === "" ? null : Number(x));
@@ -173,34 +173,157 @@ function normalizeIps(ipsRaw) {
   return map;
 }
 
+/* -------- Exam results (Brevet / Bac général / Bac pro) -------- */
+
+// parse "92,5" | "92.5" | "92%" → 92.5
+function toPct(x){
+  if (x == null || x === "") return null;
+  const s = String(x).replace("%","").replace(",",".").trim();
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+function firstOf(obj, keys){
+  for (const k of keys){
+    if (obj && obj[k] != null && obj[k] !== "") return obj[k];
+  }
+  return null;
+}
+function normalizeExams(exRaw){
+  // Retourne Map<UAI, { brevet:{current,previous,national}, bac_general:{...}, bac_pro:{...} }>
+  const out = new Map();
+  if (!exRaw) return out;
+
+  // helpers pour une ligne
+  function readKind(row, defs){
+    const cur = toPct(firstOf(row, defs.current));
+    const prev = toPct(firstOf(row, defs.previous));
+    const nat = toPct(firstOf(row, defs.national));
+    if (cur == null || prev == null || nat == null) return null;
+    return { current: cur, previous: prev, national: nat };
+  }
+
+  const DEF = {
+    brevet: {
+      current:  ["brevet","taux_brevet","dnb","taux_dnb","brevet_rate"],
+      previous: ["brevet_n_1","taux_brevet_n_1","brevet_prev","dnb_n_1","dnb_prev"],
+      national: ["brevet_nat","moy_brevet_nat","national_brevet","dnb_nat"]
+    },
+    bac_general: {
+      current:  ["bac_general","taux_bac_general","bac_gen","bac","bac_rate"],
+      previous: ["bac_general_n_1","taux_bac_general_n_1","bac_gen_n_1","bac_prev"],
+      national: ["bac_general_nat","moy_bac_general_nat","bac_gen_nat","bac_nat"]
+    },
+    bac_pro: {
+      current:  ["bac_pro","taux_bac_pro","bacpro","bac_pro_rate"],
+      previous: ["bac_pro_n_1","taux_bac_pro_n_1","bacpro_n_1","bac_pro_prev"],
+      national: ["bac_pro_nat","moy_bac_pro_nat","bacpro_nat"]
+    }
+  };
+
+  // cas 1 : tableau
+  if (Array.isArray(exRaw)){
+    for (const row of exRaw){
+      const uai = String(firstOf(row, ["uai","code_uai","numero_uai","UAI"] ) || "").trim().toUpperCase();
+      if (!uai) continue;
+      const ex = {};
+      const br = readKind(row, DEF.brevet);       if (br) ex.brevet = br;
+      const bg = readKind(row, DEF.bac_general);  if (bg) ex.bac_general = bg;
+      const bp = readKind(row, DEF.bac_pro);      if (bp) ex.bac_pro = bp;
+      if (Object.keys(ex).length) out.set(uai, ex);
+    }
+    return out;
+  }
+
+  // cas 2 : dictionnaire UAI -> objet lignes
+  if (exRaw && typeof exRaw === "object"){
+    for (const [k, v] of Object.entries(exRaw)){
+      const uai = String(k || "").trim().toUpperCase();
+      if (!uai) continue;
+      const row = v || {};
+      const ex = {};
+      const br = readKind(row, DEF.brevet);       if (br) ex.brevet = br;
+      const bg = readKind(row, DEF.bac_general);  if (bg) ex.bac_general = bg;
+      const bp = readKind(row, DEF.bac_pro);      if (bp) ex.bac_pro = bp;
+      if (Object.keys(ex).length) out.set(uai, ex);
+    }
+  }
+  return out;
+}
+
+function attachExamStats(establishments, examsByUai){
+  if (!(examsByUai instanceof Map) || !examsByUai.size) return;
+  for (const e of establishments){
+    const ex = examsByUai.get(e.uai);
+    if (!ex) continue;
+    // structure groupée (utilisée directement par map.js)
+    e.exam = ex;
+
+    // + doublons "à plat" pour compat descendante / debug
+    if (ex.brevet){
+      e.brevet_rate = ex.brevet.current;
+      e.brevet_prev = ex.brevet.previous;
+      e.brevet_nat  = ex.brevet.national;
+    }
+    if (ex.bac_general){
+      e.bac_general_rate = ex.bac_general.current;
+      e.bac_general_prev = ex.bac_general.previous;
+      e.bac_general_nat  = ex.bac_general.national;
+      // alias courts
+      e.bac_gen = ex.bac_general.current;
+      e.bac_gen_n_1 = ex.bac_general.previous;
+      e.bac_gen_nat = ex.bac_general.national;
+    }
+    if (ex.bac_pro){
+      e.bac_pro_rate = ex.bac_pro.current;
+      e.bac_pro_prev = ex.bac_pro.previous;
+      e.bac_pro_nat  = ex.bac_pro.national;
+    }
+  }
+}
+
+/* -------- Store -------- */
 const Store = {
   ready: false,
 
   establishments: [],
   ipsMap: new Map(),
+  examsMap: new Map(),
   byDept: new Map(),
   byCP: new Map(),
   gazetteer: [],
 
   async load() {
-    const [estRes, ipsRes, gazRes] = await Promise.all([
+    // exams.min.json est OPTIONNEL : on essaye, on ignore si 404
+    const [estRes, ipsRes, gazRes, exRes] = await Promise.all([
       fetch(`./data/establishments.min.json?v=${DATA_VERSION}`),
       fetch(`./data/ips.min.json?v=${DATA_VERSION}`),
-      fetch(`./data/gazetteer.min.json?v=${DATA_VERSION}`)
+      fetch(`./data/gazetteer.min.json?v=${DATA_VERSION}`),
+      fetch(`./data/exams.min.json?v=${DATA_VERSION}`).catch(() => null)
     ]);
     if (!estRes.ok) throw new Error(`Impossible de charger establishments.min.json (${estRes.status})`);
     if (!ipsRes.ok) throw new Error(`Impossible de charger ips.min.json (${ipsRes.status})`);
     if (!gazRes.ok) throw new Error(`Impossible de charger gazetteer.min.json (${gazRes.status})`);
+    // exRes peut être null/404 → toléré
 
-    const [estRaw, ipsRaw, gazRaw] = await Promise.all([ estRes.json(), ipsRes.json(), gazRes.json() ]);
+    const [estRaw, ipsRaw, gazRaw, exRaw] = await Promise.all([
+      estRes.json(),
+      ipsRes.json(),
+      gazRes.json(),
+      exRes && exRes.ok ? exRes.json() : Promise.resolve(null)
+    ]);
 
     // normalisation + secteur canonisé ici
     const est = Array.isArray(estRaw) ? estRaw.map(normalizeEstab).filter(Boolean) : [];
     const ipsMap = normalizeIps(ipsRaw);
     const gaz = Array.isArray(gazRaw) ? gazRaw.map(normalizeGazetteerEntry).filter(Boolean) : [];
+    const examsMap = normalizeExams(exRaw);
+
+    // fusion des examens dans les établissements
+    attachExamStats(est, examsMap);
 
     this.establishments = est;
     this.ipsMap = ipsMap;
+    this.examsMap = examsMap;
     this.gazetteer = gaz;
 
     // index
@@ -234,6 +357,12 @@ const Store = {
         const withIps = this.establishments.filter(e => e.type === t && Number.isFinite(this.ipsMap.get(e.uai))).length;
         const pct = Math.round(100 * withIps / Math.max(1, tot));
         console.debug(`[IPS] Couverture ${t}: ${withIps}/${tot} (${pct}%)`);
+      }
+
+      if (this.examsMap && this.examsMap.size){
+        console.debug(`[Exams] Enregistrements: ${this.examsMap.size} (brevet/bac général/bac pro)`);
+      } else {
+        console.debug(`[Exams] Aucune donnée trouvée (exams.min.json manquant ou vide)`);
       }
     } catch {}
   },
