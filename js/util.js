@@ -1,17 +1,34 @@
-// js/util.js — petits utilitaires partagés
+// js/util.js — helpers partagés (normalisation + distances)
 
-/**
- * Distance (mètres) entre 2 points (lat/lon) — formule de Haversine
- */
+// Normalise une chaîne : enlève accents/diacritiques, met en minuscules et trim
+export function strip(input) {
+  return String(input ?? "")
+    .normalize("NFKD")
+    // supprime les marques diacritiques Unicode
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
+// Conversion degrés → radians
+export const deg2rad = (d) => (Number(d) * Math.PI) / 180;
+
+// Distance haversine en mètres entre (lat1,lon1) et (lat2,lon2)
 export function distanceMeters(lat1, lon1, lat2, lon2) {
-  const toRad = d => (d * Math.PI) / 180;
-  const R = 6371000; // rayon moyen de la Terre (m)
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
+  const R = 6371000; // rayon Terre (m)
+  const φ1 = deg2rad(lat1);
+  const φ2 = deg2rad(lat2);
+  const Δφ = deg2rad(lat2 - lat1);
+  const Δλ = deg2rad(lon2 - lon1);
+
   const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    Math.sin(Δφ / 2) ** 2 +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+
+  const c = 2 * Math.asin(Math.sqrt(a));
   return R * c;
 }
+
+// Petits utilitaires optionnels (inoffensifs si non utilisés ailleurs)
+export const clamp = (n, min, max) => Math.min(max, Math.max(min, Number(n)));
+export const round1 = (n) => Math.round(Number(n) * 10) / 10;

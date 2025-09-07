@@ -1,5 +1,5 @@
 // js/app.js — recherche + filtres + stations IDFM/SNCF
-import Store from "./store.js?v=23";
+import Store from "./store.js?v=24";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=2";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr } from "./ui.js?v=2";

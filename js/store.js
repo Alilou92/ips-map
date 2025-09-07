@@ -1,6 +1,6 @@
 // js/store.js — secteur canonisé ("Public"/"Privé") + filtre robuste
 import { strip, distanceMeters } from "./util.js";
-
+import { strip } from "./util.js?v=3";
 /** Cache-bust pour les JSON statiques */
 const DATA_VERSION = "23";
 
