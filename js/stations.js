@@ -1,7 +1,8 @@
 // js/stations.js — contrôleur des gares/stations (IDFM + SNCF)
-// Lecture robuste des noms/lignes + couleurs par mode/ligne
+// Lecture robuste des noms/lignes + couleurs par mode/ligne + couleur fournie par la source
 
 import { distanceMeters } from "./util.js?v=3";
+
 // Bump si tu régénères data/stations.min.json
 const DATA_VERSION = "13";
 
@@ -24,7 +25,7 @@ const RER_COLORS = { A:"#E11E2B", B:"#0072BC", C:"#F6A800", D:"#2E7D32", E:"#8E4
 const TRAM_COLORS = { T1:"#6F6F6F",T2:"#0096D7",T3:"#C77DB3","T3A":"#C77DB3","T3B":"#C77DB3",T4:"#5BC2E7",T5:"#A9CC51",T6:"#00A36D",T7:"#E98300",T8:"#B1B3B3",T9:"#C1002A",T10:"#6E4C9A",T11:"#575756",T12:"#0077C8",T13:"#008D36" };
 const TRANSILIEN_COLORS = { H:"#0064B0", J:"#9D2763", L:"#5C4E9B", N:"#00936E", P:"#E2001A", U:"#6F2C91", K:"#2E3192", R:"#00A4A7" };
 
-// Couleurs par mode quand la ligne est inconnue (évite le gris)
+// Couleurs par mode quand la ligne est inconnue
 const DEFAULT_BY_MODE = {
   metro: "#1D87C9",
   rer: "#0072BC",
@@ -99,7 +100,34 @@ function normalizeLine(raw, mode) {
   return null;
 }
 
-function colorFor(mode, line) {
+/* Couleurs depuis la donnée source (route_color, couleur, rgb(...), etc.) */
+const COLOR_KEYS = [
+  "route_color","couleur","couleur_hex","couleur_ligne","color","hexa","hex","code_couleur","couleur_rgb"
+];
+
+function parseHexColor(x){
+  if (x == null) return null;
+  const s = String(x).trim();
+  // #RRGGBB ou RRGGBB
+  let m = s.match(/^#?([0-9A-Fa-f]{6})$/);
+  if (m) return `#${m[1].toUpperCase()}`;
+  // 0xRRGGBB
+  m = s.match(/^0x([0-9A-Fa-f]{6})$/);
+  if (m) return `#${m[1].toUpperCase()}`;
+  // rgb(...) / rgba(...)
+  m = s.match(/^rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
+  if (m){
+    const r = Math.max(0, Math.min(255, Number(m[1])));
+    const g = Math.max(0, Math.min(255, Number(m[2])));
+    const b = Math.max(0, Math.min(255, Number(m[3])));
+    const to2 = n => n.toString(16).toUpperCase().padStart(2,"0");
+    return `#${to2(r)}${to2(g)}${to2(b)}`;
+  }
+  return null;
+}
+
+function colorFor(mode, line, sourceHex) {
+  if (sourceHex) return sourceHex; // priorité à la couleur fournie
   const m = (mode || "").toLowerCase();
   const l = String(line || "").toUpperCase();
   if (m === "metro")       return METRO_COLORS[l.replace(/^0+/,"")] || DEFAULT_BY_MODE.metro;
@@ -121,15 +149,15 @@ function badgeText(mode, line){
   return (MODE_LABEL[m] || m || "?").toUpperCase();
 }
 
-function iconFor(mode, line) {
-  const color = colorFor(mode, line);
+function iconFor(row) {
+  const color = colorFor(row.mode, row.line, row.colorHex);
   const html = `<div style="width:14px;height:14px;border-radius:50%;background:${color};
     border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.35)"></div>`;
   return L.divIcon({ className: "stn", html, iconSize: [18,18], iconAnchor: [9,9] });
 }
 
 function tooltipHtml(row){
-  const color = colorFor(row.mode, row.line);
+  const color = colorFor(row.mode, row.line, row.colorHex);
   const btxt = badgeText(row.mode, row.line);
   const suffix =
     row.mode === "metro" && row.line ? ` — Ligne ${row.line}` :
@@ -167,7 +195,7 @@ const CITY_KEYS = ["commune","ville","city","localite","locality","arrondissemen
 const LINE_KEYS = [
   "line","ligne","nom_ligne","code_ligne","ligne_long","ligne_nom","ligne_code",
   "indice_ligne","indice_lig","route_short_name","route_id","id_ligne","id_ref_ligne",
-  "reseau_ligne","code","libelle_ligne"
+  "reseau_ligne","code","libelle_ligne","num_ligne","numero_ligne","ligne_numero","ligne_indice"
 ];
 
 function guessModeFromContext(row, nameU, lineU){
@@ -256,21 +284,15 @@ async function loadOnce(){
     // ligne
     const line = extractLine(r, mode, rawLine, nameU);
 
-    out.push({ name, mode, line, lat, lon });
+    // couleur depuis la source (si fournie)
+    const colRaw = firstNonEmptyRow(r, COLOR_KEYS);
+    const colorHex = parseHexColor(colRaw);
+
+    out.push({ name, mode, line, lat, lon, colorHex });
   }
 
   _rowsCache = out;
   console.debug(`[Stations] prêtes: ${out.length}`);
-
-  // Alerte si données incomplètes
-  if (_rowsCache.length) {
-    const miss = _rowsCache.filter(r => !r.line).length;
-    const bad = _rowsCache.filter(r => (r.name||'').trim().toLowerCase()==='gare').length;
-    if (miss/_rowsCache.length > 0.5 || bad/_rowsCache.length > 0.5) {
-      console.warn('[Stations] Données incomplètes: trop de stations sans "line" ou avec "name=Gare". Vérifie data/stations.min.json');
-    }
-  }
-
   return _rowsCache;
 }
 
@@ -295,7 +317,7 @@ export function makeStationsController({ map } = {}){
         const d = distanceMeters(center[0], center[1], row.lat, row.lon);
         if (d > radiusMeters) continue;
       }
-      const mk = L.marker([row.lat, row.lon], { icon: iconFor(row.mode, row.line) });
+      const mk = L.marker([row.lat, row.lon], { icon: iconFor(row) });
       mk.bindTooltip(tooltipHtml(row), { sticky: true, direction: "top" });
       mk.bindPopup(popupHtml(row));
       groups[row.mode].addLayer(mk);
