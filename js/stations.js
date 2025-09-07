@@ -16,40 +16,40 @@ const MODE_LABEL = {
   tram: "Tram",
 };
 
+// Palette Métro EXACTEMENT comme demandée
 const METRO_COLORS = {
   "1":"#FFCD00","2":"#1D87C9","3":"#9FCE66","3BIS":"#84C28E","4":"#A0006E",
   "5":"#F28E00","6":"#76C696","7":"#F59CB2","7BIS":"#89C8C5","8":"#CE64A6",
   "9":"#B0BD00","10":"#D6C178","11":"#704B1C","12":"#007852","13":"#99B4CB","14":"#662483"
 };
-const RER_COLORS = { A:"#E11E2B", B:"#0072BC", C:"#F6A800", D:"#2E7D32", E:"#8E44AD" };
-const TRAM_COLORS = {
-  T1:  "#003CA6", // bleu
-  T2:  "#CF009E", // magenta
-  T3:  "#FF7E2E", // fallback si jamais "T3" seul arrive
-  T3A: "#FF7E2E", // orange
-  T3B: "#00AE41", // vert
-  T4:  "#DFAF47", // ocre
-  T5:  "#62259D", // violet
-  T6:  "#E2231A", // rouge
-  T7:  "#704B1C", // brun
-  T8:  "#837902", // olive
-  T9:  "#3C91DC", // bleu clair
-  T10: "#6E6E00", // kaki
-  T11: "#F58F53", // corail
-  T12: "#A50034", // bordeaux
-  T13: "#8D653D", // sépia
-  T14: "#00A092"  // vert-bleu
+
+// RER officiels IDFM
+const RER_COLORS = {
+  A:"#EB2132", B:"#5091CB", C:"#FFCC30", D:"#008B5B", E:"#B94E9A"
 };
-const TRANSILIEN_COLORS = { H:"#0064B0", J:"#9D2763", L:"#5C4E9B", N:"#00936E", P:"#E2001A", U:"#6F2C91", K:"#2E3192", R:"#00A4A7" };
+
+// Tram officiels (T3A/T3B distincts, T11 corrigé -> gris)
+const TRAM_COLORS = {
+  T1:"#003CA6", T2:"#CF009E", T3:"#FF7E2E", T3A:"#FF7E2E", T3B:"#00AE41",
+  T4:"#DFAF47", T5:"#62259D", T6:"#E2231A", T7:"#704B1C", T8:"#837902",
+  T9:"#3C91DC", T10:"#6E6E00", T11:"#575756", T12:"#A50034", T13:"#8D653D",
+  T14:"#00A092"
+};
+
+// Transilien officiels (charte IDFM)
+const TRANSILIEN_COLORS = {
+  H:"#84653D", J:"#CEC73D", K:"#9B9842", L:"#C4A4CC",
+  N:"#00B297", P:"#F58F53", R:"#F49FB3", U:"#B6134C"
+};
 
 // Couleurs par mode quand la ligne est inconnue
 const DEFAULT_BY_MODE = {
   metro: "#1D87C9",
-  rer: "#0072BC",
-  tram: "#00A36D",
-  transilien: "#2E3192",
-  ter: "#0A74DA",
-  tgv: "#A1006B",
+  rer: "#5091CB",
+  tram: "#00AE41",
+  transilien: "#00B297",
+  ter: "#AAAAAA",
+  tgv: "#AAAAAA",
 };
 
 // zoom mini pour afficher les étiquettes permanentes
@@ -130,7 +130,17 @@ function parseHexColor(x){
   if (m) return `#${m[1].toUpperCase()}`;
   m = s.match(/^0x([0-9A-Fa-f]{6})$/);
   if (m) return `#${m[1].toUpperCase()}`;
+  // rgb()/rgba()
   m = s.match(/^rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
+  if (m){
+    const r = Math.max(0, Math.min(255, Number(m[1])));
+    const g = Math.max(0, Math.min(255, Number(m[2])));
+    const b = Math.max(0, Math.min(255, Number(m[3])));
+    const to2 = n => n.toString(16).toUpperCase().padStart(2,"0");
+    return `#${to2(r)}${to2(g)}${to2(b)}`;
+  }
+  // "r,g,b" sans rgb()
+  m = s.match(/^\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*$/);
   if (m){
     const r = Math.max(0, Math.min(255, Number(m[1])));
     const g = Math.max(0, Math.min(255, Number(m[2])));
@@ -141,12 +151,14 @@ function parseHexColor(x){
   return null;
 }
 
-/* ⚠️ ICI: on fait PRIMER la palette officielle, et on ne prend sourceHex qu'en secours */
+/* ⚠️ Priorité PALETTES OFFICIELLES ; sourceHex seulement en secours */
 function colorFor(mode, line, sourceHex) {
   const m = (mode || "").toLowerCase();
   const l = String(line || "").toUpperCase();
+
   if (m === "metro") {
-    const c = METRO_COLORS[l.replace(/^0+/,"")];
+    const key = l.replace(/^0+/,"");
+    const c = METRO_COLORS[key];
     return c || sourceHex || DEFAULT_BY_MODE.metro;
   }
   if (m === "rer") {
