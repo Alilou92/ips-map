@@ -108,21 +108,24 @@ def download_bytes(url_or_path: str) -> bytes:
 # Couleurs (fallback si route_color absent)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Palette officielle IDFM, relevée dans routes.txt du GTFS (route_color).
+# Elle ne sert que de secours : route_color prime toujours (cf. color_for).
 METRO_COLORS = {
-    "1":"#FFCD00","2":"#1D87C9","3":"#9FCE66","3BIS":"#84C28E","4":"#A0006E",
-    "5":"#F28E00","6":"#76C696","7":"#F59CB2","7BIS":"#89C8C5","8":"#CE64A6",
-    "9":"#B0BD00","10":"#D6C178","11":"#704B1C","12":"#007852","13":"#99B4CB","14":"#662483"
+    "1":"#FFBE00","2":"#0055C8","3":"#6E6E00","3BIS":"#82C8E6","4":"#A0006E",
+    "5":"#FF5A00","6":"#82DC73","7":"#FF82B4","7BIS":"#82DC73","8":"#D282BE",
+    "9":"#D2D200","10":"#DC9600","11":"#6E491E","12":"#00643C","13":"#82C8E6","14":"#640082"
 }
-RER_COLORS = {"A":"#E11E2B","B":"#0072BC","C":"#F6A800","D":"#2E7D32","E":"#8E44AD"}
+RER_COLORS = {"A":"#EB2132","B":"#5091CB","C":"#FFCC30","D":"#008B5B","E":"#B94E9A"}
 TRAM_COLORS = {
-    "T1":"#6F6F6F","T2":"#0096D7","T3":"#C77DB3","T3A":"#C77DB3","T3B":"#C77DB3","T4":"#5BC2E7",
-    "T5":"#A9CC51","T6":"#00A36D","T7":"#E98300","T8":"#B1B3B3","T9":"#C1002A","T10":"#6E4C9A",
-    "T11":"#575756","T12":"#0077C8","T13":"#008D36"
+    "T1":"#0055C8","T2":"#A0006E","T3A":"#FF5A00","T3B":"#00643C","T4":"#DC9600",
+    "T5":"#640082","T6":"#FF0000","T7":"#6E491E","T8":"#6E6E00","T9":"#3C91DC",
+    "T10":"#6E6E00","T11":"#FF5A00","T12":"#A50034","T13":"#8D653D","T14":"#00A092",
+    "ORLYVAL":"#5EC5ED","CDGVAL":"#5CC5ED"
 }
-TRANSILIEN_COLORS = {"H":"#0064B0","J":"#9D2763","L":"#5C4E9B","N":"#00936E","P":"#E2001A","U":"#6F2C91","K":"#2E3192","R":"#00A4A7"}
+TRANSILIEN_COLORS = {"H":"#84653D","J":"#CEC73D","K":"#9B9842","L":"#C4A4CC","N":"#00B297","P":"#F58F53","R":"#F49FB3","U":"#B6134C"}
 
 DEFAULT_BY_MODE = {
-    "metro":"#1D87C9","rer":"#0072BC","tram":"#00A36D","transilien":"#2E3192","ter":"#0A74DA","tgv":"#A1006B"
+    "metro":"#0055C8","rer":"#5091CB","tram":"#00A092","transilien":"#84653D","ter":"#AAAAAA","tgv":"#A1006B"
 }
 
 def color_for(mode: str, line: Optional[str], color_hex: Optional[str]) -> Optional[str]:
@@ -194,11 +197,15 @@ def normalize_line_from_short(mode: str, short_name: str) -> Optional[str]:
     s = (short_name or "").upper().strip()
     if not s: return None
     if mode == "metro":
+        # le GTFS IDFM nomme les bis "3B" / "7B" — à traiter avant le cas numérique
+        m = re.match(r"^(?:M)?\s*(3|7)\s*(?:BIS|B)$", s)
+        if m: return "3BIS" if m.group(1) == "3" else "7BIS"
         m = re.match(r"^(?:M)?\s*0*([0-9]{1,2})$", s)
         if m: return m.group(1)
-        m = re.match(r"^(?:M)?\s*(3|7)\s*BIS$", s)
-        if m: return "3BIS" if m.group(1) == "3" else "7BIS"
     if mode == "tram":
+        # navettes automatiques des aéroports : "ORLYVAL", "CDG VAL"
+        if "VAL" in s:
+            return "ORLYVAL" if "ORLY" in s else ("CDGVAL" if "CDG" in s else s.replace(" ", ""))
         m = re.match(r"^(?:T)?\s*([0-9]{1,2}[AB]?)$", s)
         if m: return f"T{m.group(1)}"
     if mode == "rer":

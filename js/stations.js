@@ -4,7 +4,7 @@
 import { distanceMeters } from "./util.js?v=3";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "20";
+const DATA_VERSION = "21";
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
@@ -16,22 +16,28 @@ const MODE_LABEL = {
   tram: "Tram",
 };
 
+/* Palette officielle IDFM (route_color du GTFS). Sert uniquement de secours :
+   la couleur portée par la donnée prime — cf. colorFor(). */
 const METRO_COLORS = {
-  "1":"#FFCD00","2":"#1D87C9","3":"#9FCE66","3BIS":"#84C28E","4":"#A0006E",
-  "5":"#F28E00","6":"#76C696","7":"#F59CB2","7BIS":"#89C8C5","8":"#CE64A6",
-  "9":"#B0BD00","10":"#D6C178","11":"#704B1C","12":"#007852","13":"#99B4CB","14":"#662483"
+  "1":"#FFBE00","2":"#0055C8","3":"#6E6E00","3BIS":"#82C8E6","4":"#A0006E",
+  "5":"#FF5A00","6":"#82DC73","7":"#FF82B4","7BIS":"#82DC73","8":"#D282BE",
+  "9":"#D2D200","10":"#DC9600","11":"#6E491E","12":"#00643C","13":"#82C8E6","14":"#640082"
 };
-const RER_COLORS = { A:"#E11E2B", B:"#0072BC", C:"#F6A800", D:"#2E7D32", E:"#8E44AD" };
-const TRAM_COLORS = { T1:"#6F6F6F",T2:"#0096D7",T3:"#C77DB3","T3A":"#C77DB3","T3B":"#C77DB3",T4:"#5BC2E7",T5:"#A9CC51",T6:"#00A36D",T7:"#E98300",T8:"#B1B3B3",T9:"#C1002A",T10:"#6E4C9A",T11:"#575756",T12:"#0077C8",T13:"#008D36" };
-const TRANSILIEN_COLORS = { H:"#0064B0", J:"#9D2763", L:"#5C4E9B", N:"#00936E", P:"#E2001A", U:"#6F2C91", K:"#2E3192", R:"#00A4A7" };
+const RER_COLORS = { A:"#EB2132", B:"#5091CB", C:"#FFCC30", D:"#008B5B", E:"#B94E9A" };
+const TRAM_COLORS = {
+  T1:"#0055C8",T2:"#A0006E","T3A":"#FF5A00","T3B":"#00643C",T4:"#DC9600",T5:"#640082",
+  T6:"#FF0000",T7:"#6E491E",T8:"#6E6E00",T9:"#3C91DC",T10:"#6E6E00",T11:"#FF5A00",
+  T12:"#A50034",T13:"#8D653D",T14:"#00A092",ORLYVAL:"#5EC5ED",CDGVAL:"#5CC5ED"
+};
+const TRANSILIEN_COLORS = { H:"#84653D", J:"#CEC73D", K:"#9B9842", L:"#C4A4CC", N:"#00B297", P:"#F58F53", R:"#F49FB3", U:"#B6134C" };
 
 // Couleurs par mode quand la ligne est inconnue
 const DEFAULT_BY_MODE = {
-  metro: "#1D87C9",
-  rer: "#0072BC",
-  tram: "#00A36D",
-  transilien: "#2E3192",
-  ter: "#0A74DA",
+  metro: "#0055C8",
+  rer: "#5091CB",
+  tram: "#00A092",
+  transilien: "#84653D",
+  ter: "#AAAAAA",
   tgv: "#A1006B",
 };
 
@@ -103,7 +109,7 @@ function normalizeLine(raw, mode) {
 
 /* Couleurs depuis la donnée source (route_color, couleur, rgb(...), etc.) */
 const COLOR_KEYS = [
-  "route_color","couleur","couleur_hex","couleur_ligne","color","hexa","hex","code_couleur","couleur_rgb"
+  "colorHex","route_color","couleur","couleur_hex","couleur_ligne","color","hexa","hex","code_couleur","couleur_rgb"
 ];
 
 function parseHexColor(x){
@@ -124,35 +130,44 @@ function parseHexColor(x){
   return null;
 }
 
-/* ⚠️ ICI: on fait PRIMER la palette officielle, et on ne prend sourceHex qu'en secours */
+/* La couleur de la donnée (route_color du GTFS IDFM) fait autorité : c'est la
+   couleur officielle de la ligne, tenue à jour à chaque rebuild. Les tables
+   ci-dessus ne servent que si la source n'en fournit pas. */
 function colorFor(mode, line, sourceHex) {
+  if (sourceHex) return sourceHex;
+
   const m = (mode || "").toLowerCase();
   const l = String(line || "").toUpperCase();
-  if (m === "metro") {
-    const c = METRO_COLORS[l.replace(/^0+/,"")];
-    return c || sourceHex || DEFAULT_BY_MODE.metro;
-  }
-  if (m === "rer") {
-    const c = RER_COLORS[l];
-    return c || sourceHex || DEFAULT_BY_MODE.rer;
-  }
-  if (m === "tram") {
-    const key = l.startsWith("T") ? l : ("T" + l);
-    const c = TRAM_COLORS[key];
-    return c || sourceHex || DEFAULT_BY_MODE.tram;
-  }
-  if (m === "transilien") {
-    const c = TRANSILIEN_COLORS[l];
-    return c || sourceHex || DEFAULT_BY_MODE.transilien;
-  }
-  if (m === "ter") return sourceHex || DEFAULT_BY_MODE.ter;
-  if (m === "tgv") return sourceHex || DEFAULT_BY_MODE.tgv;
-  return sourceHex || "#666";
+  if (m === "metro")      return METRO_COLORS[l.replace(/^0+/,"")] || DEFAULT_BY_MODE.metro;
+  if (m === "rer")        return RER_COLORS[l] || DEFAULT_BY_MODE.rer;
+  if (m === "tram")       return TRAM_COLORS[l.startsWith("T") || l.endsWith("VAL") ? l : ("T" + l)] || DEFAULT_BY_MODE.tram;
+  if (m === "transilien") return TRANSILIEN_COLORS[l] || DEFAULT_BY_MODE.transilien;
+  return DEFAULT_BY_MODE[m] || "#666";
+}
+
+/** "3BIS" -> "3bis", "T3A" -> "T3a", "CDGVAL" -> "CDGVAL" */
+function lineLabel(line){
+  const l = String(line || "").toUpperCase();
+  if (!l) return "";
+  if (l.endsWith("BIS")) return l.slice(0, -3) + "bis";
+  if (/^T\d{1,2}[AB]$/.test(l)) return l.slice(0, -1) + l.slice(-1).toLowerCase();
+  return l;
+}
+
+/** Noir ou blanc selon la luminance du fond (WCAG) — les lignes jaunes/vertes
+    de la palette IDFM sont illisibles en blanc. */
+function textOn(bg){
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(bg || ""));
+  if (!m) return "#fff";
+  const n = parseInt(m[1], 16);
+  const lin = (v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
+  const L = 0.2126*lin((n>>16)&255) + 0.7152*lin((n>>8)&255) + 0.0722*lin(n&255);
+  return L > 0.45 ? "#111" : "#fff";
 }
 
 function badgeText(mode, line){
   const m = (mode || "").toLowerCase();
-  const l = String(line || "").toUpperCase();
+  const l = lineLabel(line);
   if (m === "metro")      return l || "M";
   if (m === "rer")        return l ? `RER ${l}` : "RER";
   if (m === "tram")       return l || "T";
@@ -167,38 +182,42 @@ function iconFor(row) {
   return L.divIcon({ className: "stn", html, iconSize: [18,18], iconAnchor: [9,9] });
 }
 
+/** " — Ligne 3bis" / " — RER A" / " — Tram 3a" — vide si la ligne est inconnue */
+function lineSuffix(row){
+  const l = lineLabel(row.line);
+  if (!l) return "";
+  if (row.mode === "metro")      return ` — Ligne ${l}`;
+  if (row.mode === "rer")        return ` — RER ${l}`;
+  if (row.mode === "tram")       return l.endsWith("VAL") ? ` — ${l}` : ` — Tram ${l.replace(/^T/i,"")}`;
+  if (row.mode === "transilien") return ` — Ligne ${l}`;
+  return "";
+}
+
 function tooltipHtml(row){
   const color = colorFor(row.mode, row.line, row.colorHex);
   const btxt = badgeText(row.mode, row.line);
-  const suffix =
-    row.mode === "metro" && row.line ? ` — Ligne ${row.line}` :
-    row.mode === "rer" && row.line ? ` — RER ${row.line}` :
-    row.mode === "tram" && row.line ? ` — Tram ${row.line.replace(/^T/i,"")}` :
-    row.mode === "transilien" && row.line ? ` — Ligne ${row.line}` : "";
-
   return `<div class="station-tt">
-    <span class="station-badge" style="background:${color}">${esc(btxt)}</span>
+    <span class="station-badge" style="background:${color};color:${textOn(color)}">${esc(btxt)}</span>
     <span class="station-name">${esc(row.name)}</span>
-    <span style="opacity:.85">${esc(suffix)}</span>
+    <span style="opacity:.85">${esc(lineSuffix(row))}</span>
   </div>`;
 }
 
 function nameLabelHtml(row){
   const color = colorFor(row.mode, row.line, row.colorHex);
   const btxt = badgeText(row.mode, row.line);
-  return `<span class="stn-badge" style="background:${color}">${esc(btxt)}</span>
+  return `<span class="stn-badge" style="background:${color};color:${textOn(color)}">${esc(btxt)}</span>
           <span class="station-name">${esc(row.name)}</span>`;
 }
 
 function popupHtml(row){
   const mode = MODE_LABEL[row.mode] || (row.mode || "").toUpperCase();
-  let detail = "";
-  if (row.mode === "metro" && row.line) detail = `Ligne ${row.line}`;
-  else if (row.mode === "rer" && row.line) detail = `RER ${row.line}`;
-  else if (row.mode === "tram" && row.line) detail = `Tram ${row.line.replace(/^T/i,"")}`;
-  else if (row.mode === "transilien" && row.line) detail = `Ligne ${row.line}`;
-  return `<div><div style="font-weight:700;margin-bottom:.25rem">${esc(row.name)}${detail? " — "+esc(detail):""}</div>
-  <div style="opacity:.85">${esc(mode)}</div></div>`;
+  const color = colorFor(row.mode, row.line, row.colorHex);
+  const detail = lineSuffix(row).replace(/^\s*—\s*/, "");
+  return `<div><div style="font-weight:700;margin-bottom:.25rem">
+    <span class="stn-badge" style="background:${color};color:${textOn(color)}">${esc(badgeText(row.mode, row.line))}</span>
+    ${esc(row.name)}</div>
+  <div style="opacity:.85">${esc(mode)}${detail ? " — " + esc(detail) : ""}</div></div>`;
 }
 
 /* ───────── extraction nom/ligne (fallback) ───────── */
@@ -269,6 +288,24 @@ async function loadOnce(){
   const out = [];
   for (const r0 of rawRows){
     const r = flatten(r0);
+
+    // Format produit par scripts/build_stations.py : {name, mode, line, lat, lon, colorHex}
+    // Tout est déjà normalisé (ligne officielle + route_color du GTFS) : on le prend
+    // tel quel. Le ré-analyser perdait "7BIS", "11", "T3A"… et la couleur de ligne.
+    if (r && typeof r.mode === "string" && Number.isFinite(Number(r.lat)) && Number.isFinite(Number(r.lon))
+        && ("line" in r || "colorHex" in r)){
+      const mode = modeKey(r.mode) || null;
+      if (!mode) continue;
+      out.push({
+        name: String(r.name || "Gare"),
+        mode,
+        line: r.line != null && r.line !== "" ? String(r.line).toUpperCase() : null,
+        lat: Number(r.lat),
+        lon: Number(r.lon),
+        colorHex: parseHexColor(r.colorHex) || null
+      });
+      continue;
+    }
 
     // coords
     let lat = Number(firstNonEmptyRow(r, ["lat","latitude"]));

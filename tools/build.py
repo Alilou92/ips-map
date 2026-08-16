@@ -12,6 +12,8 @@ import json, time, unicodedata, urllib.request, gzip, os, re
 import re
 BASE_EXPLORE = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/"
 DS_GEO = "fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre"
+# n'exporter que les établissements en service (etat_etablissement_libe == "OUVERT")
+KEEP_ONLY_OPEN = True
 DS_IPS = {
     "ecole":   "fr-en-ips-ecoles-ap2022",
     "college": "fr-en-ips-colleges-ap2023",
@@ -113,20 +115,24 @@ def canon_sector(val):
     if "priv" in s: return "Privé"
     return "—"
 
+# Le champ réel de l'annuaire est "secteur_public_prive_libe" — il doit rester en tête.
 SECTOR_KEYS = [
-    "secteur","statut_public_prive","secteur_public_prive","public_prive",
+    "secteur_public_prive_libe","secteur","statut_public_prive","secteur_public_prive","public_prive",
     "statut","statut_uai","secteur_uai","secteur_d_etablissement","secteur_etablissement",
     "type_contrat","contrat_etablissement","nature_secteur",
 ]
 
 def sector_from_props(props):
+    """Secteur depuis les champs déclarés uniquement.
+
+    Surtout pas de repli « premier champ contenant pub/priv » : il lisait le nom
+    de l'établissement et se trompait (LP Charles *Privat* -> Privé, écoles
+    « privées » de Wallis-et-Futuna qui sont publiques). Sans champ fiable on
+    renvoie "—", que l'app affiche tel quel.
+    """
     for k in SECTOR_KEYS:
         v = pick_ci(props, k)
         if v not in (None, ""):
-            c = canon_sector(v)
-            if c != "—": return c
-    for v in (props or {}).values():
-        if isinstance(v, str):
             c = canon_sector(v)
             if c != "—": return c
     return "—"
@@ -138,6 +144,7 @@ def build_establishments():
     print(f"  -> {len(feats)} features")
 
     out, seen = [], set()
+    skipped_closed = 0
     for ft in feats:
         geom = ft.get("geometry") or {}
         props = ft.get("properties") or {}
@@ -153,6 +160,14 @@ def build_establishments():
         nat = pick_ci(props, "nature_uai_libe","libelles_nature","nature","nature_uai","libelle_nature")
         typ = nature_to_type(nat)
         if not typ: continue
+
+        # n'affiche que les établissements en service (exclut "A OUVRIR"/"A FERMER").
+        # Mettre KEEP_ONLY_OPEN = False pour retrouver l'ancien comportement.
+        if KEEP_ONLY_OPEN:
+            etat = pick_ci(props, "etat_etablissement_libe", "etat_etablissement")
+            if etat not in (None, "") and str(etat).strip().upper() not in ("OUVERT", "1"):
+                skipped_closed += 1
+                continue
 
         secteur = sector_from_props(props)
         name = pick_ci(props, "appellation_officielle","nom_etablissement","nom_de_l_etablissement",
@@ -171,14 +186,33 @@ def build_establishments():
     out.sort(key=lambda x: (x["dep"], x["type"], x["uai"]))
     with open("data/establishments.min.json","w",encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",",":"))
-    print(f"OK: data/establishments.min.json ({len(out)} établissements)")
+    n_unknown = sum(1 for r in out if r["secteur"] == "—")
+    print(f"OK: data/establishments.min.json ({len(out)} établissements"
+          f" — {skipped_closed} non ouverts écartés, {n_unknown} sans secteur déclaré)")
+
+# Champ IPS de l'établissement : les 3 jeux de données n'ont PAS le même schéma.
+# Les lycées n'ont pas de colonne "ips" : c'est "ips_etab" (l'établissement complet),
+# à ne pas confondre avec ips_voie_gt / ips_voie_pro (une seule voie) ni avec les
+# ips_national_* / ips_academique_* / ips_departemental_* (moyennes de référence).
+IPS_FIELDS = {
+    "ecole":   ("ips", "indice_position_sociale", "indice"),
+    "college": ("ips", "indice_position_sociale", "indice"),
+    "lycee":   ("ips_etab", "ips_voie_gt", "ips_voie_pro", "ips_post_bac"),
+}
+
+def parse_rentree(y):
+    """'2024-2025' -> 2024 ; '2024' -> 2024 ; 2024 -> 2024 ; sinon None."""
+    if isinstance(y, int):
+        return y
+    m = re.match(r"\s*(\d{4})", str(y or ""))
+    return int(m.group(1)) if m else None
 
 def build_ips():
     print("Télécharge IPS (exports JSON, dernière rentrée par UAI)…")
     result = {}
     for tag, ds in DS_IPS.items():
-        print(f"  • {tag}")
         rows = export_json(ds)
+        fields = IPS_FIELDS.get(tag, ("ips",))
         best = {}
         for r in rows:
             u_raw = pick_ci(r, "uai", "code_uai")
@@ -186,22 +220,25 @@ def build_ips():
                 continue
             u = str(u_raw).strip().upper()
 
-            val = pick_ci(r, "ips", "indice_position_sociale", "indice")
+            # champs explicites uniquement : un "premier champ contenant ips"
+            # attraperait ips_national_* et fausserait complètement le score.
+            val = pick_ci(r, *fields)
             if val is None:
-                for k, v in r.items():
-                    if isinstance(k, str) and "ips" in k.lower() and v not in (None, ""):
-                        val = v
-                        break
+                continue
             try:
                 v = float(val)
             except Exception:
                 continue
 
-            y = pick_ci(r, "rentree_scolaire", "rentree", "annee")
-            year = int(y) if (isinstance(y, int) or (isinstance(y, str) and y.isdigit())) else None
+            year = parse_rentree(pick_ci(r, "rentree_scolaire", "rentree", "annee"))
             prev = best.get(u)
-            if not prev or (year is not None and (prev[0] is None or year > prev[0])):
+            # l'export n'est pas trié par rentrée : on compare vraiment les années
+            if prev is None or (year or -1) > (prev[0] or -1):
                 best[u] = (year, v)
+
+        years = sorted({y for y, _ in best.values() if y is not None})
+        kept = max(years) if years else "?"
+        print(f"  • {tag}: {len(best)} UAI — rentrées disponibles {years} — retenue {kept}")
 
         for u, (_y, v) in best.items():
             result[u] = v
