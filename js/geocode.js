@@ -95,6 +95,26 @@ async function tryNominatim(query) {
   } catch { return null; }
 }
 
+/**
+ * Géocodage inverse : point cliqué sur la carte -> adresse la plus proche.
+ * Même forme de retour que geocode() ({lat, lon, label, provider, address}),
+ * pour être utilisable partout où un résultat de geocode() est attendu.
+ */
+export async function reverseGeocode(lat, lon){
+  try {
+    const url = `https://api-adresse.data.gouv.fr/reverse/?lon=${encodeURIComponent(lon)}&lat=${encodeURIComponent(lat)}`;
+    const r = await fetch(url, { headers: { "Accept": "application/json" }});
+    if (!r.ok) return null;
+    const js = await r.json();
+    const f = js.features?.[0];
+    const coords = f?.geometry?.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) return null;
+    const [flon, flat] = coords;
+    if (!Number.isFinite(flat) || !Number.isFinite(flon)) return null;
+    return { lat: flat, lon: flon, label: f.properties?.label || "", provider: "BAN", address: addressFromBAN(f.properties) };
+  } catch { return null; }
+}
+
 export async function geocode(q){
   const query = (q || "").trim();
   if (!query) throw new Error("Adresse introuvable");

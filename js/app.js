@@ -1,7 +1,7 @@
 // js/app.js — recherche + filtres + stations IDFM/SNCF
 import Store from "./store.js?v=30";
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=9";
-import { geocode } from "./geocode.js?v=5";
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=10";
+import { geocode, reverseGeocode } from "./geocode.js?v=6";
 import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur, renderPrix, clearPrix } from "./ui.js?v=14";
 import { collegeDeSecteur } from "./secteur.js?v=2";
 import { makeStationsController } from "./stations.js?v=25";
@@ -246,8 +246,16 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
 /* autour d’une adresse/ville/CP */
 async function runAround(q, radiusKm, sectorFilter, typesWanted){
   await Store.load();
+  const point = await resolvePoint(q);
+  await runAroundPoint(point, radiusKm, sectorFilter, typesWanted);
+}
 
-  const { lat, lon, label, address } = await resolvePoint(q);
+/** Cœur de la recherche « autour d'un point » — utilisé aussi bien pour une
+    adresse tapée (via runAround) que pour un point cliqué sur la carte
+    (via runMapClick), qui a déjà lat/lon/label/address sans repasser par le
+    géocodage direct. */
+async function runAroundPoint({ lat, lon, label, address }, radiusKm, sectorFilter, typesWanted){
+  await Store.load();
   addrLat = lat; addrLon = lon;
   lastDep = null;
   clearSecteur(); clearPrix();
@@ -406,6 +414,43 @@ function rerunIfQuery(){
   if (document.getElementById('addr').value.trim()) runSearch();
 }
 
+/**
+ * Clic sur la carte : recherche centrée sur le point cliqué, sans avoir à
+ * connaître ou taper une adresse. Reprend les filtres actuellement affichés
+ * (rayon, secteur, types) — comme une recherche normale, juste déclenchée
+ * depuis la carte plutôt que depuis le champ texte.
+ */
+async function runMapClick(lat, lon){
+  clearErr();
+  const radiusKm = parseFloat(document.getElementById('radiusKm').value);
+  const sectorFilter = normalizeSectorFromSelect(document.getElementById('secteur').value);
+  const typesChecked = getTypesWanted();
+  const typesWanted = typesChecked.size ? typesChecked : new Set(["ecole","college","lycee"]);
+
+  const token = ++_searchToken;
+  const btn = document.getElementById('go');
+  btn.disabled = true;
+  setCount("Chargement…");
+  try {
+    const point = await reverseGeocode(lat, lon);
+    if (!point) throw new Error("Aucune adresse trouvée à cet endroit");
+    if (token !== _searchToken) return;   // une recherche plus récente a déjà pris la main
+
+    // reflète le point choisi dans le champ : une adresse valide y figure
+    // désormais, cohérente avec les prochains changements de filtre
+    document.getElementById('addr').value = point.label || `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+    await runAroundPoint(point, radiusKm, sectorFilter, typesWanted);
+  } catch(e){
+    if (token !== _searchToken) return;
+    console.error(e);
+    setCount("—");
+    showErr("Erreur : " + (e?.message || e));
+  } finally {
+    if (token === _searchToken) btn.disabled = false;
+  }
+}
+
 /* bind */
 document.getElementById('go').addEventListener('click', runSearch);
 document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
@@ -415,6 +460,12 @@ for (const id of Object.values(TYPE_IDS)){
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', rerunIfQuery);
 }
+
+// clic carte : cherche autour du point cliqué. Les marqueurs (établissements,
+// gares, adresse "A") et le cercle de rayon (rendu non interactif dans
+// drawAddressCircle) n'atteignent jamais ce handler — vérifié : Leaflet
+// arrête la propagation des clics sur ses propres marqueurs.
+map.on('click', e => runMapClick(e.latlng.lat, e.latlng.lng));
 
 // (stations) écoute les cases à cocher
 for (const id of Object.values(MODE_IDS)){

@@ -49,7 +49,11 @@ export function drawAddressCircle(map, lat, lon, radiusMeters) {
     color: "#60a5fa",
     weight: 2,
     fillColor: "#93c5fd",
-    fillOpacity: 0.15
+    fillOpacity: 0.15,
+    // purement visuel : sans ça, ce disque (qui recouvre toute la zone de
+    // recherche) avale les clics et empêche de cliquer la carte pour relancer
+    // une recherche ailleurs à l'intérieur du rayon déjà affiché.
+    interactive: false
   }).addTo(map);
   return circle;
 }
