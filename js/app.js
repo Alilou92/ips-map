@@ -1,8 +1,8 @@
 // js/app.js — recherche + filtres + stations IDFM/SNCF
-import Store from "./store.js?v=23";
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=4";
+import Store from "./store.js?v=24";
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=5";
 import { geocode } from "./geocode.js?v=2";
-import { renderList, setCount, showErr, showInfo, clearErr, clearList } from "./ui.js?v=3";
+import { renderList, setCount, showErr, showInfo, clearErr, clearList } from "./ui.js?v=4";
 import { makeStationsController } from "./stations.js?v=19";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";
 
@@ -167,7 +167,7 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
         <div class="meta">${human.slice(0,-1)} — ${it.commune || ""}</div>
         <div class="meta">IPS : ${Number(it.ips).toFixed(1)} • UAI : ${it.uai}</div>`;
       if (it.lat && it.lon){
-        const m = markerFor({ ...it, type:t }, new Map([[it.uai, it.ips]]));
+        const m = markerFor({ ...it, type:t }, new Map([[it.uai, it.ips]]), Store.examsFor(it.uai), Store.examsMeta);
         m.addTo(markersLayer);
         anyMarker = true;
         row.addEventListener('click', ()=> map.setView([it.lat,it.lon], 16));
@@ -246,14 +246,15 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   const markersByUai = new Map();
   items.forEach(f => {
-    const m = markerFor(f, Store.ipsMap);
+    const m = markerFor(f, Store.ipsMap, Store.examsFor(f.uai), Store.examsMeta);
     m.addTo(markersLayer);
     markersByUai.set(f.uai, m);
   });
 
   items.sort((a,b)=> (a.distance??1e12) - (b.distance??1e12));
   setCount(`${items.length} établissement${items.length>1?"s":""} dans ${triedKm} km — ${sectorFilter==="all"?"Tous secteurs":sectorFilter}`);
-  renderList({ items, ipsMap: Store.ipsMap, markersByUai, map });
+  renderList({ items, ipsMap: Store.ipsMap, markersByUai, map,
+               examsMap: Store.examsMap, examsMeta: Store.examsMeta });
 
   fitToMarkers(map, items.concat([{lat, lon}]));
   src.openPopup();

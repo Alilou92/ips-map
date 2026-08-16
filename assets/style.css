@@ -128,6 +128,32 @@ body{
 .sectionTitle{margin:10px 0 6px;color:#a9b8d6}
 .note,.footer{color:var(--muted);font-size:12px;margin-top:10px}
 
+/* ——— Résultats aux examens ——— */
+/* VA = valeur ajoutée : écart au résultat attendu vu le profil social des élèves.
+   Vert = l'établissement fait mieux que prévu, rouge = moins bien. */
+.va{
+  display:inline-block;
+  margin-left:6px;
+  padding:0 6px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:700;
+  line-height:1.6;
+  cursor:help;
+}
+.va-pos{ background:#0f5132; color:#a7f3d0; }
+.va-neu{ background:#3f3f46; color:#e4e4e7; }
+.va-neg{ background:#7f1d1d; color:#fecaca; }
+
+.exam-block{
+  margin-top:6px;
+  padding-top:6px;
+  border-top:1px solid rgba(128,128,128,.35);
+}
+.exam-row + .exam-row{ margin-top:5px; }
+.exam-label{ opacity:.85; margin-right:4px; }
+.exam-sub{ opacity:.7; font-size:11px; }
+
 /* ——— Légende ——— */
 .legend{
   position:fixed;

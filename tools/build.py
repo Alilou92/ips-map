@@ -21,6 +21,40 @@ DS_IPS = {
 }
 GEO_COMMUNES = "https://geo.api.gouv.fr/communes?fields=centre,nom,code,codesPostaux&format=json&geometry=centre"
 
+# ---------- Résultats aux examens (brevet / bac) ----------
+# Chaque source porte le taux de réussite ET la "valeur ajoutée" : l'écart entre
+# le résultat obtenu et celui attendu compte tenu du profil social des élèves.
+# C'est la VA qui distingue un bon établissement d'un établissement à bon public.
+DS_EXAMS = {
+    "brevet": {
+        "dataset": "fr-en-indicateurs-valeur-ajoutee-colleges",
+        "annee":   "session",
+        "taux":    "taux_de_reussite_g",
+        "va":      "va_du_taux_de_reussite_g",
+        "n":       "nb_candidats_g",
+        "mention": None,
+        "libelle": "Brevet",
+    },
+    "bac_gt": {
+        "dataset": "fr-en-indicateurs-de-resultat-des-lycees-gt_v2",
+        "annee":   "annee",
+        "taux":    "taux_reu_total",
+        "va":      "va_reu_total",
+        "n":       "presents_total",
+        "mention": "taux_men_total",
+        "libelle": "Bac général et technologique",
+    },
+    "bac_pro": {
+        "dataset": "fr-en-indicateurs-de-resultat-des-lycees-pro_v2",
+        "annee":   "annee",
+        "taux":    "taux_reu_total",
+        "va":      "va_reu_total",
+        "n":       "presents_total",
+        "mention": "taux_men_total",
+        "libelle": "Bac professionnel",
+    },
+}
+
 # ---------- IDFM gares/stations ----------
 IDFM_DATASET = "emplacement-des-gares-idf"
 IDFM_RECORDS = (
@@ -247,6 +281,81 @@ def build_ips():
     with open("data/ips.min.json", "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
     print(f"OK: data/ips.min.json ({len(result)} UAI avec IPS)")
+
+def _to_float(x):
+    if x in (None, ""):
+        return None
+    try:
+        return float(str(x).replace(",", ".").replace("%", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+def build_exams():
+    """data/exams.min.json — taux de réussite + valeur ajoutée par établissement.
+
+    Sortie : { "meta": {kind: {annee, prec, national, n}}, "etab": {UAI: {kind: {...}}} }
+    avec t = taux de la dernière session, tp = session précédente,
+    va = valeur ajoutée, m = taux de mention (lycées), n = candidats/présents.
+
+    Aucun équivalent n'existe pour le premier degré : les évaluations
+    nationales ne sont pas publiées par école. Le fichier ne couvre donc
+    que les collèges et les lycées.
+    """
+    print("Télécharge les résultats aux examens (brevet + bac)…")
+    meta, etab = {}, {}
+
+    for kind, conf in DS_EXAMS.items():
+        rows = export_json(conf["dataset"])
+
+        # regroupe par année : ces jeux contiennent plusieurs millésimes
+        par_annee = {}
+        for r in rows:
+            y = parse_rentree(pick_ci(r, conf["annee"]))
+            u = str(pick_ci(r, "uai", "code_uai") or "").strip().upper()
+            t = _to_float(pick_ci(r, conf["taux"]))
+            if y is None or not u or t is None:
+                continue
+            par_annee.setdefault(y, {})[u] = {
+                "t":  round(t, 1),
+                "va": _to_float(pick_ci(r, conf["va"])),
+                "m":  _to_float(pick_ci(r, conf["mention"])) if conf["mention"] else None,
+                "n":  _to_float(pick_ci(r, conf["n"])),
+            }
+
+        if not par_annee:
+            print(f"  • {kind}: aucune donnée exploitable, ignoré")
+            continue
+
+        annees = sorted(par_annee)
+        cur, prev = annees[-1], (annees[-2] if len(annees) > 1 else None)
+        courant = par_annee[cur]
+        precedent = par_annee.get(prev, {})
+
+        # taux national = moyenne pondérée par le nombre de candidats
+        num = sum(v["t"] * v["n"] for v in courant.values() if v["n"])
+        den = sum(v["n"] for v in courant.values() if v["n"])
+        national = round(num / den, 1) if den else None
+
+        meta[kind] = {"annee": cur, "prec": prev, "national": national, "n": len(courant)}
+
+        for u, v in courant.items():
+            row = {"t": v["t"]}
+            tp = precedent.get(u, {}).get("t")
+            if tp is not None:  row["tp"] = tp
+            if v["va"] is not None:  row["va"] = round(v["va"], 1)
+            if v["m"] is not None:   row["m"] = round(v["m"], 1)
+            if v["n"]:               row["n"] = int(v["n"])
+            etab.setdefault(u, {})[kind] = row
+
+        avec_va = sum(1 for v in courant.values() if v["va"] is not None)
+        print(f"  • {kind}: {len(courant)} établissements en {cur} "
+              f"(précédent {prev}) — national {national}% — valeur ajoutée sur {avec_va}")
+        time.sleep(0.05)
+
+    out = {"meta": meta, "etab": etab}
+    with open("data/exams.min.json", "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    print(f"OK: data/exams.min.json ({len(etab)} établissements)")
 
 def build_gazetteer():
     print("Télécharge gazetteer communes…")
@@ -567,6 +676,7 @@ def build_stations():
 if __name__ == "__main__":
     build_establishments()
     build_ips()
+    build_exams()
     build_gazetteer()
     build_stations()
     print("Terminé.")

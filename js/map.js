@@ -1,5 +1,6 @@
 // js/map.js — Leaflet helpers (fond HTTPS + utilitaires)
 import { round1 } from "./util.js?v=3";
+import { examHtml } from "./exams.js?v=1";
 
 /* ---------- fond de carte ---------- */
 const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -53,7 +54,7 @@ export function drawAddressCircle(map, lat, lon, radiusMeters) {
   return circle;
 }
 
-export function markerFor(f, ipsMap) {
+export function markerFor(f, ipsMap, exams = null, examsMeta = {}) {
   // f = { lat, lon, uai, type, name, commune, secteur }
   const ips = ipsMap instanceof Map ? ipsMap.get(String(f.uai || "").toUpperCase()) : undefined;
   const col = colorForIps(ips);
@@ -74,6 +75,7 @@ export function markerFor(f, ipsMap) {
       <div style="font-weight:700;margin-bottom:.25rem">${typeHuman}${commune}</div>
       <div>${(f.name ?? "").toString()}</div>
       <div style="opacity:.85">IPS : <strong>${ipsTxt}</strong> • Secteur : ${sec} • UAI : ${f.uai ?? "—"}</div>
+      ${examHtml(exams, examsMeta)}
     </div>`
   );
 

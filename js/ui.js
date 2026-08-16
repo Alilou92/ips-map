@@ -1,4 +1,6 @@
 // js/ui.js
+import { examSummary } from "./exams.js?v=1";
+
 export function showErr(msg){
   const el=document.getElementById('err'); if(!el) return;
   el.textContent=msg; el.classList.add('show'); el.classList.remove('info');
@@ -26,7 +28,7 @@ export function clearList(msg){
   }
 }
 
-export function renderList({ items, ipsMap, markersByUai, map }){
+export function renderList({ items, ipsMap, markersByUai, map, examsMap, examsMeta }){
   const list = document.getElementById('list');
   list.innerHTML = "";
   for (const f of items){
@@ -36,10 +38,16 @@ export function renderList({ items, ipsMap, markersByUai, map }){
     const typeHuman = (f.type||"?")
       .replace("ecole","École").replace("college","Collège").replace("lycee","Lycée");
 
+    const ex = examsMap ? examSummary(examsMap.get(f.uai), examsMeta) : null;
+    const exHtml = ex
+      ? `<div class="meta">${ex.text}${ex.va!=null?` <span class="va ${ex.vaClass}" title="${ex.title}">VA ${ex.va}</span>`:""}</div>`
+      : "";
+
     row.innerHTML = `
       <div class="name">${f.name||"Établissement"}<span class="badge">${f.secteur||"—"}</span></div>
       <div class="meta">${typeHuman} — ${f.commune||""}</div>
-      <div class="meta">IPS : ${ips!=null?Number(ips).toFixed(1):"—"} • UAI : ${f.uai}</div>`;
+      <div class="meta">IPS : ${ips!=null?Number(ips).toFixed(1):"—"} • UAI : ${f.uai}</div>
+      ${exHtml}`;
 
     row.addEventListener('click', ()=>{
       const m = markersByUai.get(f.uai);

@@ -2,7 +2,7 @@
 import { strip, distanceMeters } from "./util.js?v=3";
 
 /** Cache-bust pour les JSON statiques */
-const DATA_VERSION = "26";
+const DATA_VERSION = "27";
 
 /* ---------- utils ---------- */
 const toNum = (x) => (x === null || x === undefined || x === "" ? null : Number(x));
@@ -179,6 +179,8 @@ const Store = {
 
   establishments: [],
   ipsMap: new Map(),
+  examsMap: new Map(),   // UAI -> { brevet?:{t,tp,va,n}, bac_gt?:{...}, bac_pro?:{...} }
+  examsMeta: {},         // { brevet:{annee,prec,national,n}, ... }
   byDept: new Map(),
   byCP: new Map(),
   gazetteer: [],
@@ -213,6 +215,11 @@ const Store = {
     this.ipsMap = ipsMap;
     this.gazetteer = gaz;
 
+    // Résultats aux examens : facultatif, l'app reste utilisable sans.
+    // L'échec est journalisé explicitement — la version précédente de cette
+    // fonctionnalité échouait en silence et personne ne l'a vu pendant des mois.
+    await this._loadExams();
+
     // index
     this.byDept.clear();
     this.byCP.clear();
@@ -245,7 +252,48 @@ const Store = {
         const pct = Math.round(100 * withIps / Math.max(1, tot));
         console.debug(`[IPS] Couverture ${t}: ${withIps}/${tot} (${pct}%)`);
       }
+
+      for (const t of ["college","lycee"]) {
+        const tot = this.establishments.filter(e => e.type === t).length;
+        const withEx = this.establishments.filter(e => e.type === t && this.examsMap.has(e.uai)).length;
+        const pct = Math.round(100 * withEx / Math.max(1, tot));
+        console.debug(`[Exams] Couverture ${t}: ${withEx}/${tot} (${pct}%)`);
+      }
     } catch {}
+  },
+
+  /** Résultats aux examens — n'interrompt jamais le chargement principal */
+  async _loadExams() {
+    try {
+      const res = await fetch(`./data/exams.min.json?v=${DATA_VERSION}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const raw = await res.json();
+
+      const etab = raw && typeof raw.etab === "object" ? raw.etab : null;
+      if (!etab) throw new Error("format inattendu : clé 'etab' absente");
+
+      const map = new Map();
+      for (const [uai, kinds] of Object.entries(etab)) {
+        const u = String(uai).trim().toUpperCase();
+        const row = {};
+        for (const [kind, v] of Object.entries(kinds || {})) {
+          if (v && Number.isFinite(Number(v.t))) row[kind] = v;
+        }
+        if (u && Object.keys(row).length) map.set(u, row);
+      }
+      this.examsMap = map;
+      this.examsMeta = raw.meta || {};
+      console.debug(`[Exams] ${map.size} établissements avec résultats`, this.examsMeta);
+    } catch (err) {
+      this.examsMap = new Map();
+      this.examsMeta = {};
+      console.warn("[Exams] résultats indisponibles :", err.message);
+    }
+  },
+
+  /** Résultats d'un établissement, ou null */
+  examsFor(uai) {
+    return this.examsMap.get(String(uai || "").trim().toUpperCase()) || null;
   },
 
   /** Trouve une commune par nom (exact -> commence par -> contient) */
