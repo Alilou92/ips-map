@@ -36,7 +36,7 @@
            placeholder="Adresse, ville ou code postal • ou tape un département (94, Val-de-Marne)" />
 
     <label for="radiusKm">Rayon
-      <select id="radiusKm" aria-label="Rayon de recherche">
+      <select autocomplete="off" id="radiusKm" aria-label="Rayon de recherche">
         <option value="1" selected>1 km</option>
         <option value="2">2 km</option>
         <option value="3">3 km</option>
@@ -44,7 +44,7 @@
     </label>
 
     <label for="types">Types
-      <select id="types" multiple size="3" title="Ctrl/Cmd-clic pour multi"
+      <select id="types" autocomplete="off" multiple size="3" title="Ctrl/Cmd-clic pour multi"
               aria-label="Types d'établissements">
         <option value="ecole" selected>École</option>
         <option value="college" selected>Collège</option>
@@ -53,7 +53,7 @@
     </label>
 
     <label for="secteur">Secteur
-      <select id="secteur" aria-label="Secteur">
+      <select autocomplete="off" id="secteur" aria-label="Secteur">
         <option value="all" selected>Tous secteurs</option>
         <option value="Public">Public</option>
         <option value="Privé">Privé</option>
@@ -111,8 +111,8 @@
 
   <!-- synchronisé avec stations.js / app.js -->
 
-<script>window.APP_VERSION = 'v55';</script>
-<script type="module" src="./js/app.js?v=v55"></script>
+<script>window.APP_VERSION = 'v56';</script>
+<script type="module" src="./js/app.js?v=v56"></script>
 
 
 </body>
