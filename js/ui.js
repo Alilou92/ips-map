@@ -1,5 +1,7 @@
 // js/ui.js
-import { examSummary } from "./exams.js?v=4";
+import { examSummary } from "./exams.js?v=5";
+import { prixHtml } from "./prix.js?v=3";
+import { secteurIndicsHtml } from "./secteurIndics.js?v=2";
 
 export function showErr(msg){
   const el=document.getElementById('err'); if(!el) return;
@@ -19,7 +21,8 @@ export function setCount(txt){ const el=document.getElementById('count'); if(el)
  * Bloc « collège de secteur » au-dessus des résultats.
  * res  = retour de collegeDeSecteur(), etab = l'établissement correspondant.
  */
-export function renderSecteur({ res, etab, ips, exams, examsMeta, label, onClick, choix }){
+export function renderSecteur({ res, etab, ips, exams, examsMeta, label, onClick, choix,
+                                ipsSerie, secteurPrix, prixMeta }){
   const box = document.getElementById('secteurBox');
   if (!box) return;
   box.innerHTML = "";
@@ -57,13 +60,26 @@ export function renderSecteur({ res, etab, ips, exams, examsMeta, label, onClick
     <div class="secteur-sub">${etab.commune || ""}${label ? ` — pour ${label}` : ""}</div>
     <div class="secteur-sub">IPS : ${Number.isFinite(Number(ips)) ? Number(ips).toFixed(1) : "—"}${
       ex ? ` • ${ex.text}${ex.va!=null?` <span class="va ${ex.vaClass}" title="${ex.title}">VA ${ex.va}</span>`:""}` : ""}</div>
-    ${approx}`;
+    ${approx}
+    ${secteurIndicsHtml({ ipsSerie, secteurPrix, meta: prixMeta || {} })}`;
 
   if (typeof onClick === "function"){
     el.style.cursor = "pointer";
     el.addEventListener('click', onClick);
   }
   box.appendChild(el);
+}
+
+/** Bloc « prix au m² » de la commune cherchée */
+export function renderPrix({ prix, meta, commune, dep }){
+  const box = document.getElementById('prixBox');
+  if (!box) return;
+  box.innerHTML = prixHtml(prix ?? null, meta, commune, dep);
+}
+
+export function clearPrix(){
+  const box = document.getElementById('prixBox');
+  if (box) box.innerHTML = "";
 }
 
 export function clearSecteur(){

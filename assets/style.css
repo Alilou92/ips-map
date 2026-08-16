@@ -275,3 +275,30 @@ body{
 }
 .secteur-name{ font-weight:700; }
 .secteur-sub{ color:#a9b8d6; font-size:12px; margin-top:2px; }
+
+/* ——— Prix au m² (DVF) ——— */
+.prix{
+  border:1px solid #3a3a24;
+  border-left:3px solid #d2b23c;
+  border-radius:10px;
+  background:#1c1a10;
+  padding:10px;
+  margin:8px 0;
+}
+.prix-h{
+  font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  color:#d2b23c;margin-bottom:4px;
+}
+.prix-row + .prix-row{ margin-top:5px; }
+.prix-label{ opacity:.85;margin-right:6px; }
+.prix-unite{ opacity:.7;font-size:12px; }
+.prix-sub{ opacity:.7;font-size:11px; }
+.prix-note{ opacity:.6;font-size:11px;margin-top:6px; }
+
+/* ——— Indicateurs du secteur de carte scolaire ——— */
+.indics{ margin-top:8px; padding-top:8px; border-top:1px solid rgba(128,128,128,.3); }
+.ind-row + .ind-row{ margin-top:8px; }
+.ind-label{ opacity:.85; margin-right:6px; }
+.ind-sub{ opacity:.65; font-size:11px; margin-top:2px; }
+.ind-note{ opacity:.55; font-size:11px; margin-top:8px; }
+.spark{ vertical-align:middle; margin-left:8px; }

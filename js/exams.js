@@ -25,8 +25,9 @@ const pct = (v) => Number.isFinite(Number(v)) ? `${Number(v).toFixed(0).replace(
 function fmtVa(va) {
   const v = Number(va);
   if (!Number.isFinite(v)) return null;
-  if (v === 0) return "0";
-  return (v > 0 ? "+" : "−") + Math.abs(v).toFixed(0);
+  const arrondi = Math.abs(v).toFixed(0);
+  if (arrondi === "0") return "0";        // "+0" n'a pas de sens
+  return (v > 0 ? "+" : "−") + arrondi;
 }
 
 function vaClass(va) {

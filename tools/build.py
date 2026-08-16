@@ -245,11 +245,11 @@ def parse_rentree(y):
 
 def build_ips():
     print("Télécharge IPS (exports JSON, dernière rentrée par UAI)…")
-    result = {}
+    result, serie = {}, {}
     for tag, ds in DS_IPS.items():
         rows = export_json(ds)
         fields = IPS_FIELDS.get(tag, ("ips",))
-        best = {}
+        best, toutes = {}, {}
         for r in rows:
             u_raw = pick_ci(r, "uai", "code_uai")
             if not u_raw:
@@ -271,6 +271,8 @@ def build_ips():
             # l'export n'est pas trié par rentrée : on compare vraiment les années
             if prev is None or (year or -1) > (prev[0] or -1):
                 best[u] = (year, v)
+            if year is not None:
+                toutes.setdefault(u, {})[str(year)] = round(v, 1)
 
         years = sorted({y for y, _ in best.values() if y is not None})
         kept = max(years) if years else "?"
@@ -278,11 +280,20 @@ def build_ips():
 
         for u, (_y, v) in best.items():
             result[u] = v
+        # série complète : l'évolution de l'IPS d'un collège mesure la
+        # recomposition sociale de son secteur de recrutement
+        for u, annees_uai in toutes.items():
+            serie.setdefault(u, {}).update(annees_uai)
         time.sleep(0.05)
 
     with open("data/ips.min.json", "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
     print(f"OK: data/ips.min.json ({len(result)} UAI avec IPS)")
+
+    with open("data/ips_serie.min.json", "w", encoding="utf-8") as f:
+        json.dump(serie, f, ensure_ascii=False, separators=(",", ":"))
+    plusieurs = sum(1 for v in serie.values() if len(v) > 1)
+    print(f"OK: data/ips_serie.min.json ({len(serie)} UAI, {plusieurs} avec au moins deux rentrées)")
 
 def _to_float(x):
     if x in (None, ""):
@@ -389,6 +400,278 @@ def build_exams():
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print(f"OK: data/exams.min.json ({len(etab)} établissements)")
 
+DVF_BASE = "https://files.data.gouv.fr/geo-dvf/latest/csv"
+# DVF n'existe pas en Alsace-Moselle ni à Mayotte : régime du livre foncier,
+# pas de publication DGFiP. À traiter comme une absence, jamais comme un zéro.
+DVF_ABSENTS = {"57", "67", "68", "976"}
+PRIX_MIN_VENTES = 5      # en deçà, la médiane ne veut rien dire
+MILLESIMES_PRIX = 5      # nombre d'années de prix conservées
+
+def _dvf_millesimes():
+    """Millésimes publiés, dans la limite de MILLESIMES_PRIX.
+
+    Deux points ne font pas une tendance : c'est la série qui permet de lire
+    l'évolution d'un secteur, et de distinguer une hausse durable du creux
+    conjoncturel de 2023-2024 dû à la remontée des taux.
+    """
+    try:
+        html = _fetch_bytes(f"{DVF_BASE}/").decode("utf-8", "replace")
+        annees = sorted({int(m) for m in re.findall(r"csv/(20\d{2})/", html)})
+        return annees[-MILLESIMES_PRIX:] if annees else []
+    except Exception as e:
+        print(f"  (DVF) millésimes indéterminables : {e}")
+        return []
+
+def _mediane(vals):
+    v = sorted(vals)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
+def _prix_departement(dep, annee):
+    """Médiane €/m² par commune et par type de bien, pour un département/an.
+
+    Nettoyage indispensable : une mutation qui couvre plusieurs lots partage un
+    prix unique entre eux et fausse tout ratio, d'où le filtre sur les ventes
+    portant un seul local bâti. Appartements et maisons sont séparés — les
+    mélanger rend la médiane d'une commune mixte ininterprétable.
+    """
+    url = f"{DVF_BASE}/{annee}/departements/{dep}.csv.gz"
+    raw = gzip.decompress(_fetch_bytes(url)).decode("utf-8", "replace")
+
+    par_mutation = {}
+    for r in csv.DictReader(io.StringIO(raw)):
+        if r.get("nature_mutation") != "Vente":
+            continue
+        t = r.get("type_local")
+        if t not in ("Appartement", "Maison"):
+            continue
+        par_mutation.setdefault(r["id_mutation"], []).append(r)
+
+    par_commune = {}
+    for lots in par_mutation.values():
+        if len(lots) != 1:               # ventes multi-lots : prix non imputable
+            continue
+        r = lots[0]
+        try:
+            v = float(r["valeur_fonciere"]); s = float(r["surface_reelle_bati"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if not (9 <= s <= 400) or v <= 0:
+            continue
+        p = v / s
+        if not (500 <= p <= 25000):      # écarte les cessions à 1 € et les aberrations
+            continue
+        insee = (r.get("code_commune") or "").strip()
+        if not insee:
+            continue
+        cle = "appt" if r["type_local"] == "Appartement" else "maison"
+        par_commune.setdefault(insee, {}).setdefault(cle, []).append(p)
+
+    out = {}
+    for insee, types in par_commune.items():
+        row = {}
+        for cle, vals in types.items():
+            if len(vals) >= PRIX_MIN_VENTES:
+                row[cle] = round(_mediane(vals))
+                row["n" + cle.capitalize()] = len(vals)
+        if row:
+            out[insee] = row
+    return out
+
+
+# DVF abrège les types de voie là où la carte scolaire les écrit en toutes
+# lettres : sans cette table, 43 % des ventes ne se rattachent à aucun secteur.
+VOIE_ABBR = {
+    "IMP":"IMPASSE","CHE":"CHEMIN","CRS":"COURS","AV":"AVENUE","BD":"BOULEVARD",
+    "RTE":"ROUTE","PL":"PLACE","ALL":"ALLEE","SQ":"SQUARE","RES":"RESIDENCE",
+    "LOT":"LOTISSEMENT","SEN":"SENTIER","PAS":"PASSAGE","VLA":"VILLA",
+    "HAM":"HAMEAU","LD":"LIEU DIT","MTE":"MONTEE","PROM":"PROMENADE",
+    "TRA":"TRAVERSE","RLE":"RUELLE","CAR":"CARREFOUR","DOM":"DOMAINE",
+    "ESP":"ESPLANADE","FG":"FAUBOURG","GR":"GRANDE RUE","PTE":"PORTE",
+    "STE":"SAINTE","ST":"SAINT","PARC":"PARC","QUAI":"QUAI","CITE":"CITE",
+}
+
+def norm_voie_dvf(s):
+    """Clé de voie DVF alignée sur celle de la carte scolaire."""
+    v = norm_voie(s)
+    if not v:
+        return ""
+    mots = v.split(" ")
+    if mots[0] in VOIE_ABBR:
+        mots[0] = VOIE_ABBR[mots[0]]
+    return " ".join(mots)
+
+def _secteur_dune_vente(sect, insee, voie, numero):
+    """UAI du collège desservant cette vente, ou None.
+
+    Même logique que côté navigateur : commune à secteur unique, sinon tronçon
+    de voie avec numéros et parité. Une voie partagée entre deux collèges est
+    écartée — on ne saurait pas à qui imputer la vente.
+    """
+    iu = sect["uniq"].get(insee)
+    if iu is not None:
+        return sect["uai"][iu]
+
+    troncons = (sect["voies"].get(insee) or {}).get(voie)
+    if not troncons:
+        return None
+
+    try:
+        n = int(float(numero)) if numero not in (None, "") else None
+    except (TypeError, ValueError):
+        n = None
+
+    hits = set()
+    for deb, fin, par, iu in troncons:
+        if n is None:
+            if deb is None and fin is None:
+                hits.add(iu)
+            continue
+        if par == "P" and n % 2: continue
+        if par == "I" and not n % 2: continue
+        if deb is not None and n < deb: continue
+        if fin is not None and n > fin: continue
+        hits.add(iu)
+
+    if not hits:                       # numéro hors tronçons : la voie entière suffit
+        hits = {t[3] for t in troncons}
+    return sect["uai"][next(iter(hits))] if len(hits) == 1 else None
+
+def _ventes_departement(dep, annee):
+    """Ventes exploitables d'un département pour une année, déjà nettoyées."""
+    url = f"{DVF_BASE}/{annee}/departements/{dep}.csv.gz"
+    raw = gzip.decompress(_fetch_bytes(url)).decode("utf-8", "replace")
+
+    par_mutation = {}
+    for r in csv.DictReader(io.StringIO(raw)):
+        if r.get("nature_mutation") != "Vente":
+            continue
+        if r.get("type_local") not in ("Appartement", "Maison"):
+            continue
+        par_mutation.setdefault(r["id_mutation"], []).append(r)
+
+    out = []
+    for lots in par_mutation.values():
+        if len(lots) != 1:             # multi-lots : prix non imputable
+            continue
+        r = lots[0]
+        try:
+            v = float(r["valeur_fonciere"]); su = float(r["surface_reelle_bati"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if not (9 <= su <= 400) or v <= 0:
+            continue
+        p = v / su
+        if not (500 <= p <= 25000):
+            continue
+        out.append((r.get("code_commune") or "", r["type_local"], p,
+                    norm_voie_dvf(r.get("adresse_nom_voie")), r.get("adresse_numero")))
+    return out
+
+def build_prix():
+    """data/prix.min.json — prix au m² par commune ET par secteur de collège.
+
+    Sortie :
+      meta.annees      millésimes retenus, du plus ancien au plus récent
+      communes[INSEE]  { appt: [...], nAppt: [...], maison: [...], nMaison: [...] }
+      secteurs[UAI]    { rues, prix: [...], ventes: [...] }
+
+    Les tableaux sont alignés sur meta.annees, avec null là où le nombre de
+    ventes ne permet pas une médiane crédible.
+
+    Le secteur de carte scolaire est un bien meilleur périmètre que la commune :
+    c'est celui qui décide de l'affectation, et il est plus fin — Bordeaux
+    compte plusieurs secteurs quand la médiane communale n'en donne qu'un.
+    Mesuré sur la Gironde, 92 % des ventes s'y rattachent.
+    """
+    annees = _dvf_millesimes()
+    if not annees:
+        print("  (DVF) aucun millésime, prix ignorés")
+        return
+    print(f"Télécharge DVF {annees[0]}-{annees[-1]}…")
+
+    # liste des départements tirée de l'annuaire, pas de data/dep/ : ces
+    # bundles sont produits APRÈS cette étape, s'y fier ne marcherait que
+    # grâce aux fichiers d'un build précédent
+    est = json.load(open("data/establishments.min.json", encoding="utf-8"))
+    deps = sorted({norm_dep(e.get("dep")) for e in est} - {""} - DVF_ABSENTS)
+
+    communes, secteurs, echecs = {}, {}, []
+    rattachees = manquees = 0
+
+    for dep in deps:
+        # carte scolaire du département, si elle existe (17, 22, 2A, 2B absents)
+        try:
+            with open(os.path.join("data", "secteur", f"{dep}.min.json"), encoding="utf-8") as f:
+                sect = json.load(f)
+            rues_par_uai = {}
+            for voies in sect["voies"].values():
+                for troncons in voies.values():
+                    for t in troncons:
+                        rues_par_uai[sect["uai"][t[3]]] = rues_par_uai.get(sect["uai"][t[3]], 0) + 1
+        except FileNotFoundError:
+            sect, rues_par_uai = None, {}
+
+        for i, annee in enumerate(annees):
+            try:
+                ventes = _ventes_departement(dep, annee)
+            except Exception:
+                if annee == annees[-1]:
+                    echecs.append(dep)
+                continue
+
+            par_commune, par_secteur = {}, {}
+            for insee, type_local, prix, voie, numero in ventes:
+                if not insee:
+                    continue
+                cle = "appt" if type_local == "Appartement" else "maison"
+                par_commune.setdefault(insee, {}).setdefault(cle, []).append(prix)
+
+                if sect:
+                    uai = _secteur_dune_vente(sect, insee, voie, numero)
+                    if uai:
+                        par_secteur.setdefault(uai, []).append(prix)
+                        rattachees += 1
+                    else:
+                        manquees += 1
+
+            for insee, types in par_commune.items():
+                row = communes.setdefault(insee, {})
+                for cle, vals in types.items():
+                    row.setdefault(cle, [None] * len(annees))
+                    row.setdefault("n" + cle.capitalize(), [0] * len(annees))
+                    row["n" + cle.capitalize()][i] = len(vals)
+                    if len(vals) >= PRIX_MIN_VENTES:
+                        row[cle][i] = round(_mediane(vals))
+
+            for uai, vals in par_secteur.items():
+                row = secteurs.setdefault(uai, {
+                    "rues": rues_par_uai.get(uai, 0),
+                    "prix": [None] * len(annees),
+                    "ventes": [0] * len(annees),
+                })
+                row["ventes"][i] = len(vals)
+                if len(vals) >= PRIX_MIN_VENTES:
+                    row["prix"][i] = round(_mediane(vals))
+
+        time.sleep(0.05)
+
+    out = {
+        "meta": {"annees": annees, "absents": sorted(DVF_ABSENTS),
+                 "minVentes": PRIX_MIN_VENTES, "deps": len(deps) - len(echecs)},
+        "communes": communes,
+        "secteurs": secteurs,
+    }
+    with open("data/prix.min.json", "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+
+    total = rattachees + manquees
+    taux = f"{100*rattachees/total:.1f} %" if total else "—"
+    avec_prix = sum(1 for v in secteurs.values() if any(x is not None for x in v["prix"]))
+    print(f"OK: data/prix.min.json — {len(communes)} communes, {len(secteurs)} secteurs "
+          f"({avec_prix} avec au moins une médiane), {taux} des ventes rattachées à un secteur"
+          + (f", {len(echecs)} départements en échec : {echecs}" if echecs else ""))
+
 def build_dep_bundles():
     """data/dep/<dep>.min.json — tout ce qui concerne un département.
 
@@ -408,6 +691,21 @@ def build_dep_bundles():
     ips = json.load(open("data/ips.min.json", encoding="utf-8"))
     exams = json.load(open("data/exams.min.json", encoding="utf-8"))
     ex_etab, ex_meta = exams.get("etab", {}), exams.get("meta", {})
+
+    # prix immobiliers : facultatifs, le reste de l'app fonctionne sans
+    try:
+        prix_all = json.load(open("data/prix.min.json", encoding="utf-8"))
+    except FileNotFoundError:
+        prix_all = {"meta": {}, "communes": {}, "secteurs": {}}
+        print("  (prix) data/prix.min.json absent, bundles sans prix")
+    prix_com = prix_all.get("communes", {})
+    prix_sect = prix_all.get("secteurs", {})
+    prix_meta = prix_all.get("meta", {})
+
+    try:
+        ips_serie = json.load(open("data/ips_serie.min.json", encoding="utf-8"))
+    except FileNotFoundError:
+        ips_serie = {}
 
     par_dep = {}
     for e in est:
@@ -435,11 +733,18 @@ def build_dep_bundles():
         # à chaque build et faisait commiter 12 Mo de bruit au workflow mensuel
         # alors qu'aucune donnée n'avait bougé.
         uais = sorted({e["uai"] for e in etabs})
+        # Les communes se rattachent au département par le préfixe de leur code
+        # INSEE ("72181" -> 72, "2A004" -> 2A, "97302" -> 973), pas par le code
+        # postal, qui déborde régulièrement sur le département voisin.
+        pref = dep
         bundle = {
             "dep": dep,
             "etab": etabs,
             "ips": {u: ips[u] for u in uais if u in ips},
             "exams": {u: ex_etab[u] for u in uais if u in ex_etab},
+            "prix": {i: v for i, v in prix_com.items() if i.startswith(pref)},
+            "ipsSerie": {u: ips_serie[u] for u in uais if u in ips_serie and len(ips_serie[u]) > 1},
+            "secteurPrix": {u: prix_sect[u] for u in uais if u in prix_sect},
         }
         path = os.path.join(out_dir, f"{dep}.min.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -456,6 +761,7 @@ def build_dep_bundles():
             "deps": index,
             "grid": {k: sorted(v) for k, v in sorted(grille.items())},
             "examsMeta": ex_meta,
+            "prixMeta": prix_meta,
         }, f, ensure_ascii=False, separators=(",", ":"))
 
     gros = sorted(par_dep.items(), key=lambda kv: -len(kv[1]))[:3]
@@ -906,8 +1212,9 @@ if __name__ == "__main__":
     build_establishments()
     build_ips()
     build_exams()
-    build_dep_bundles()
-    build_secteurs()
+    build_secteurs()      # la carte scolaire alimente le rattachement des ventes
+    build_prix()          # ... donc elle doit précéder les prix
+    build_dep_bundles()   # ... qui alimentent à leur tour les bundles
     build_gazetteer()
     build_stations()
     write_version()

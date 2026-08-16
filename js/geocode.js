@@ -18,7 +18,12 @@ function addressFromBAN(p) {
 
 async function tryBAN(query) {
   try {
-    const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1&autocomplete=1&type=street&type=locality&type=municipality&type=postcode&type=housenumber`;
+    // Pas de filtre "type" : le paramètre est mono-valué côté BAN, et le
+    // répéter revenait à ne garder que le dernier (housenumber). Toute
+    // recherche sans numéro exact — une rue, une commune — renvoyait alors
+    // zéro résultat et retombait sur un géocodeur de secours moins précis,
+    // sans code INSEE, donc sans carte scolaire ni prix.
+    const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1&autocomplete=1`;
     const r = await fetch(url, { headers: { "Accept": "application/json" }});
     if (!r.ok) return null;
     const js = await r.json();
@@ -96,12 +101,14 @@ export async function geocode(q){
 
   const isCP = /^\d{5}$/.test(query);
 
-  // Si code postal: commencer par GéoAPI (évite rate-limit BAN)
+  // Code postal : la BAN d'abord elle aussi, car elle seule renvoie le code
+  // INSEE dont dépendent la carte scolaire et le prix au m². GéoAPI reste en
+  // secours si elle ne répond pas.
   if (isCP) {
-    const g1 = await tryGeoApiByPostcode(query);
-    if (g1) return g1;
     const b = await tryBAN(query);
     if (b) return b;
+    const g1 = await tryGeoApiByPostcode(query);
+    if (g1) return g1;
     const n = await tryNominatim(query);
     if (n) return n;
     throw new Error("Géocodage indisponible");

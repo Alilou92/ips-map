@@ -186,6 +186,10 @@ const Store = {
   ipsMap: new Map(),
   examsMap: new Map(),
   examsMeta: {},
+  prixMap: new Map(),      // code INSEE -> { appt:[…], nAppt:[…], maison:[…] }
+  prixMeta: {},            // { annees, absents, minVentes }
+  ipsSerieMap: new Map(),  // UAI -> { "2023": 98.4, "2024": 99.1, … }
+  secteurPrixMap: new Map(), // UAI -> { rues, prix:[…], ventes:[…] }
   byDept: new Map(),
   byCP: new Map(),
   gazetteer: [],
@@ -215,6 +219,7 @@ const Store = {
     if (!res.ok) throw new Error(`Index des départements indisponible (${res.status})`);
     this.index = await res.json();
     this.examsMeta = this.index.examsMeta || {};
+    this.prixMeta = this.index.prixMeta || {};
     this.ready = true;
     console.debug(`[Store] index prêt — ${Object.keys(this.index.deps || {}).length} départements, données du ${this.version}`);
   },
@@ -274,6 +279,15 @@ const Store = {
       for (const [u, v] of Object.entries(b.exams || {})) {
         if (v && Object.keys(v).length) this.examsMap.set(String(u).toUpperCase(), v);
       }
+      for (const [insee, v] of Object.entries(b.prix || {})) {
+        if (v && Object.keys(v).length) this.prixMap.set(String(insee), v);
+      }
+      for (const [u, v] of Object.entries(b.ipsSerie || {})) {
+        this.ipsSerieMap.set(String(u).toUpperCase(), v);
+      }
+      for (const [u, v] of Object.entries(b.secteurPrix || {})) {
+        this.secteurPrixMap.set(String(u).toUpperCase(), v);
+      }
       this.loadedDeps.add(dep);
       console.debug(`[Store] département ${dep} : ${est.length} établissements`);
     })();
@@ -300,6 +314,21 @@ const Store = {
       })();
     }
     return this._gazPromise;
+  },
+
+  /** Prix au m² d'une commune (code INSEE), ou null */
+  prixFor(insee) {
+    return this.prixMap.get(String(insee || "").trim()) || null;
+  },
+
+  /** Série d'IPS d'un établissement, ou null */
+  ipsSerieFor(uai) {
+    return this.ipsSerieMap.get(String(uai || "").trim().toUpperCase()) || null;
+  },
+
+  /** Prix au m² du secteur de carte scolaire d'un collège, ou null */
+  secteurPrixFor(uai) {
+    return this.secteurPrixMap.get(String(uai || "").trim().toUpperCase()) || null;
   },
 
   /** Résultats d'un établissement, ou null */

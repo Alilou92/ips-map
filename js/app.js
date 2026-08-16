@@ -1,8 +1,8 @@
 // js/app.js — recherche + filtres + stations IDFM/SNCF
-import Store from "./store.js?v=28";
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=8";
-import { geocode } from "./geocode.js?v=3";
-import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur } from "./ui.js?v=9";
+import Store from "./store.js?v=30";
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=9";
+import { geocode } from "./geocode.js?v=5";
+import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur, renderPrix, clearPrix } from "./ui.js?v=13";
 import { collegeDeSecteur } from "./secteur.js?v=2";
 import { makeStationsController } from "./stations.js?v=24";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";
@@ -154,7 +154,7 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   const dep = normDept(depInput);
   await Store.loadDeps([dep]);
 
-  clearSecteur();
+  clearSecteur(); clearPrix();
   addrLat = null; addrLon = null; lastRadiusMeters = 0;
   lastDep = dep;
 
@@ -221,7 +221,7 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
   const { lat, lon, label, address } = await resolvePoint(q);
   addrLat = lat; addrLon = lon;
   lastDep = null;
-  clearSecteur();
+  clearSecteur(); clearPrix();
 
   // Charge les départements que le cercle recoupe — 3 km étant le rayon maximal
   // que la recherche peut tenter, on couvre d'un coup les élargissements.
@@ -282,7 +282,25 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
   fitToMarkers(map, items.concat([{lat, lon}]));
   src.openPopup();
 
+  showPrix(address);
   await showSecteur(address, label);
+}
+
+/** Prix au m² de la commune cherchée (médiane DVF) */
+function showPrix(address){
+  // bloc d'appoint : une défaillance ici ne doit pas emporter le collège de
+  // secteur, qui est affiché juste après
+  try {
+    if (!address || !address.citycode) return;
+    renderPrix({
+      prix: Store.prixFor?.(address.citycode),
+      meta: Store.prixMeta,
+      commune: address.city || "",
+      dep: address.dep || null
+    });
+  } catch (e) {
+    console.warn("[Prix] indisponible :", e.message);
+  }
 }
 
 /** Collège de secteur : seule une vraie adresse permet de le déterminer */
@@ -299,6 +317,9 @@ async function showSecteur(address, label){
     : null;
   renderSecteur({
     res, etab, label, choix,
+    ipsSerie: etab ? Store.ipsSerieFor?.(etab.uai) : null,
+    secteurPrix: etab ? Store.secteurPrixFor?.(etab.uai) : null,
+    prixMeta: Store.prixMeta,
     ips: etab ? Store.ipsMap.get(etab.uai) : null,
     exams: etab ? Store.examsFor(etab.uai) : null,
     examsMeta: Store.examsMeta,
