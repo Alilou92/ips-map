@@ -253,3 +253,6 @@ body{
   }
   .legend{ display:none; }
 }
+
+/* Localité d'une station (commune + code postal) dans l'infobulle */
+.station-tt .station-loc{ opacity:.8; font-size:11px; margin-top:2px; }

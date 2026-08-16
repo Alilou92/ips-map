@@ -4,7 +4,7 @@
 import { distanceMeters } from "./util.js?v=3";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "21";
+const DATA_VERSION = "22";
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
@@ -193,13 +193,23 @@ function lineSuffix(row){
   return "";
 }
 
+/** "Nanterre (92000)" — repère utile quand on ne connaît pas la région */
+function localite(row){
+  const c = row.commune ? String(row.commune).trim() : "";
+  const cp = row.cp ? String(row.cp).trim() : "";
+  if (c && cp) return `${c} (${cp})`;
+  return c || cp || "";
+}
+
 function tooltipHtml(row){
   const color = colorFor(row.mode, row.line, row.colorHex);
   const btxt = badgeText(row.mode, row.line);
+  const lieu = localite(row);
   return `<div class="station-tt">
     <span class="station-badge" style="background:${color};color:${textOn(color)}">${esc(btxt)}</span>
     <span class="station-name">${esc(row.name)}</span>
     <span style="opacity:.85">${esc(lineSuffix(row))}</span>
+    ${lieu ? `<div class="station-loc">${esc(lieu)}</div>` : ""}
   </div>`;
 }
 
@@ -214,10 +224,16 @@ function popupHtml(row){
   const mode = MODE_LABEL[row.mode] || (row.mode || "").toUpperCase();
   const color = colorFor(row.mode, row.line, row.colorHex);
   const detail = lineSuffix(row).replace(/^\s*—\s*/, "");
+  const lieu = localite(row);
+  // "RER — RER A" serait redondant : le détail suffit quand il reprend le mode
+  const ligne1 = detail
+    ? (detail.toUpperCase().startsWith(mode.toUpperCase()) ? detail : `${mode} — ${detail}`)
+    : mode;
   return `<div><div style="font-weight:700;margin-bottom:.25rem">
     <span class="stn-badge" style="background:${color};color:${textOn(color)}">${esc(badgeText(row.mode, row.line))}</span>
     ${esc(row.name)}</div>
-  <div style="opacity:.85">${esc(mode)}${detail ? " — " + esc(detail) : ""}</div></div>`;
+  <div style="opacity:.85">${esc(ligne1)}</div>
+  ${lieu ? `<div style="opacity:.85">${esc(lieu)}</div>` : ""}</div>`;
 }
 
 /* ───────── extraction nom/ligne (fallback) ───────── */
@@ -227,6 +243,7 @@ const NAME_KEYS = [
   "nom_de_la_gare","gare","station"
 ];
 const CITY_KEYS = ["commune","ville","city","localite","locality","arrondissement","commune_principale"];
+const CP_KEYS   = ["cp","code_postal","codepostal","postcode","postal_code","cp_gare"];
 
 const LINE_KEYS = [
   "line","ligne","nom_ligne","code_ligne","ligne_long","ligne_nom","ligne_code",
@@ -302,7 +319,10 @@ async function loadOnce(){
         line: r.line != null && r.line !== "" ? String(r.line).toUpperCase() : null,
         lat: Number(r.lat),
         lon: Number(r.lon),
-        colorHex: parseHexColor(r.colorHex) || null
+        colorHex: parseHexColor(r.colorHex) || null,
+        commune: r.commune ? String(r.commune) : null,
+        cp: r.cp ? String(r.cp) : null,
+        dep: r.dep ? String(r.dep) : null
       });
       continue;
     }
@@ -340,7 +360,10 @@ async function loadOnce(){
     const colRaw = firstNonEmptyRow(r, COLOR_KEYS);
     const colorHex = parseHexColor(colRaw);
 
-    out.push({ name, mode, line, lat, lon, colorHex });
+    const cpRaw = firstNonEmptyRow(r, CP_KEYS);
+    out.push({ name, mode, line, lat, lon, colorHex,
+               commune: city ? String(city) : null,
+               cp: cpRaw ? String(cpRaw) : null, dep: null });
   }
 
   _rowsCache = out;

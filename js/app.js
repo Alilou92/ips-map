@@ -3,7 +3,7 @@ import Store from "./store.js?v=24";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=5";
 import { geocode } from "./geocode.js?v=2";
 import { renderList, setCount, showErr, showInfo, clearErr, clearList } from "./ui.js?v=4";
-import { makeStationsController } from "./stations.js?v=19";
+import { makeStationsController } from "./stations.js?v=21";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";
 
 /* helpers */

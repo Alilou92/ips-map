@@ -395,6 +395,80 @@ def build_station_entries_from_gtfs(gtfs_bytes: bytes) -> List[Dict[str, object]
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+BAN_REVERSE_CSV = "https://api-adresse.data.gouv.fr/reverse/csv/"
+
+def add_communes(entries: List[Dict[str, object]]) -> int:
+    """Ajoute commune / code postal / département à chaque station.
+
+    Le GTFS ne porte aucune indication de localité : on géocode donc à l'envers
+    via la BAN, en un seul appel groupé. Utile pour qui ne connaît pas la région
+    et cherche « où est cette gare » — à Paris on récupère bien l'arrondissement
+    (Abbesses -> 75018) et pas un code générique.
+
+    En cas d'échec réseau on ne bloque pas le build : les stations sortent
+    simplement sans ces champs.
+    """
+    # une seule interrogation par point distinct
+    points = sorted({(round(float(e["lat"]), 6), round(float(e["lon"]), 6)) for e in entries})
+    print(f"Géocodage inverse de {len(points)} points via la BAN…")
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["lat", "lon"])
+    for lat, lon in points:
+        w.writerow([lat, lon])
+    payload = buf.getvalue().encode("utf-8")
+
+    boundary = "----ipsmapboundary"
+    parts = []
+    for col in ("result_city", "result_postcode", "result_context"):
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="result_columns"\r\n\r\n{col}\r\n'.encode()
+        )
+    parts.append(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="data"; filename="p.csv"\r\n'
+        f"Content-Type: text/csv\r\n\r\n".encode() + payload + b"\r\n"
+    )
+    parts.append(f"--{boundary}--\r\n".encode())
+    body = b"".join(parts)
+
+    try:
+        req = Request(BAN_REVERSE_CSV, data=body, headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": "ips-map-builder/1.0",
+        })
+        with urlopen(req, timeout=300) as r:
+            text = r.read().decode("utf-8")
+    except Exception as e:
+        print(f"  (BAN) échec, stations sans commune : {e}")
+        return 0
+
+    loc = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        try:
+            key = (round(float(row["lat"]), 6), round(float(row["lon"]), 6))
+        except (TypeError, ValueError, KeyError):
+            continue
+        ville = (row.get("result_city") or "").strip()
+        cp = (row.get("result_postcode") or "").strip()
+        # result_context = "94, Val-de-Marne, Île-de-France"
+        ctx = [p.strip() for p in (row.get("result_context") or "").split(",")]
+        dep = ctx[0] if ctx and ctx[0] else ""
+        if ville or cp:
+            loc[key] = {"commune": ville, "cp": cp, "dep": dep}
+
+    n = 0
+    for e in entries:
+        v = loc.get((round(float(e["lat"]), 6), round(float(e["lon"]), 6)))
+        if not v:
+            continue
+        if v["commune"]: e["commune"] = v["commune"]
+        if v["cp"]:      e["cp"] = v["cp"]
+        if v["dep"]:     e["dep"] = v["dep"]
+        n += 1
+    print(f"  -> {n}/{len(entries)} stations localisées")
+    return n
+
 def main() -> int:
     print("Téléchargement GTFS IDFM…")
     url = IDFM_GTFS_URL or discover_latest_idfm_zip_url_via_datagouv(DATAGOUV_DATASET_SLUG)
@@ -414,6 +488,8 @@ def main() -> int:
     except Exception as e:
         print("Erreur pendant le parsing GTFS:", e)
         return 4
+
+    add_communes(entries)
 
     here = os.path.dirname(os.path.abspath(__file__))
     out_path = os.path.abspath(os.path.join(here, "..", "data", "stations.min.json"))
