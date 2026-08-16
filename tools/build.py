@@ -8,7 +8,7 @@
 #   data/gazetteer.min.json       -> [{name,cps[],lat,lon,dep?}]
 #   data/stations.min.json        -> [{name,type,mode,line?,lat,lon}]
 
-import json, time, unicodedata, urllib.request, gzip, os, re, csv, io
+import json, time, unicodedata, urllib.request, gzip, os, re, csv, io, math
 BASE_EXPLORE = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/"
 DS_GEO = "fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre"
 # n'exporter que les établissements en service (etat_etablissement_libe == "OUVERT")
@@ -356,6 +356,88 @@ def build_exams():
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print(f"OK: data/exams.min.json ({len(etab)} établissements)")
 
+def build_dep_bundles():
+    """data/dep/<dep>.min.json — tout ce qui concerne un département.
+
+    L'annuaire national pèse 2,4 Mo gzippés et était téléchargé avant même que
+    la première recherche puisse aboutir. Découpé par département, une recherche
+    ne tire que ce dont elle a besoin (18 Ko en médiane, 88 Ko pour le Nord).
+
+    data/dep/index.json porte l'emprise géographique de chaque département :
+    l'app y lit quels fichiers un cercle de recherche recoupe, ce qui règle le
+    cas des rayons à cheval sur une frontière sans table d'adjacence à tenir.
+
+    establishments/ips/exams.min.json restent produits comme intermédiaires de
+    build mais ne sont plus livrés au navigateur.
+    """
+    print("Assemble les bundles par département…")
+    est = json.load(open("data/establishments.min.json", encoding="utf-8"))
+    ips = json.load(open("data/ips.min.json", encoding="utf-8"))
+    exams = json.load(open("data/exams.min.json", encoding="utf-8"))
+    ex_etab, ex_meta = exams.get("etab", {}), exams.get("meta", {})
+
+    par_dep = {}
+    for e in est:
+        d = norm_dep(e.get("dep"))
+        if not d:
+            continue
+        par_dep.setdefault(d, []).append(e)
+
+    out_dir = os.path.join("data", "dep")
+    os.makedirs(out_dir, exist_ok=True)
+    for f in os.listdir(out_dir):
+        if f.endswith(".json"):
+            os.remove(os.path.join(out_dir, f))
+
+    # Grille de 0,1° (~11 km) : quelle(s) commune(s) départementale(s) occupent
+    # chaque cellule. Une emprise rectangulaire par département ne tenait pas :
+    # une seule coordonnée erronée dans l'annuaire — une école de Savoie
+    # géolocalisée en Normandie — étirait la boîte sur la moitié du pays et
+    # faisait télécharger le département à chaque recherche parisienne.
+    grille = {}
+    index, total = {}, 0
+    for dep, etabs in sorted(par_dep.items()):
+        uais = {e["uai"] for e in etabs}
+        bundle = {
+            "dep": dep,
+            "etab": etabs,
+            "ips": {u: ips[u] for u in uais if u in ips},
+            "exams": {u: ex_etab[u] for u in uais if u in ex_etab},
+        }
+        path = os.path.join(out_dir, f"{dep}.min.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(bundle, f, ensure_ascii=False, separators=(",", ":"))
+        total += os.path.getsize(path)
+
+        index[dep] = {"n": len(etabs)}
+        for e in etabs:
+            cle = f"{int(math.floor(e['lat'] * 10))}_{int(math.floor(e['lon'] * 10))}"
+            grille.setdefault(cle, set()).add(dep)
+
+    with open(os.path.join(out_dir, "index.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "deps": index,
+            "grid": {k: sorted(v) for k, v in sorted(grille.items())},
+            "examsMeta": ex_meta,
+        }, f, ensure_ascii=False, separators=(",", ":"))
+
+    gros = sorted(par_dep.items(), key=lambda kv: -len(kv[1]))[:3]
+    print(f"OK: data/dep/ — {len(par_dep)} départements, {total // 1024} Ko au total "
+          f"(plus gros : " + ", ".join(f"{d} ({len(v)} étab.)" for d, v in gros) + ")")
+
+def write_version():
+    """data/version.json — cache-buster daté, écrit à chaque build.
+
+    Évite d'avoir à incrémenter DATA_VERSION à la main : le navigateur lit ce
+    fichier sans cache puis suffixe toutes les URL de données avec sa valeur.
+    C'est ce qui permet au workflow de rafraîchissement de publier sans
+    intervention.
+    """
+    v = time.strftime("%Y%m%d-%H%M")
+    with open("data/version.json", "w", encoding="utf-8") as f:
+        json.dump({"v": v, "built": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f)
+    print(f"OK: data/version.json ({v})")
+
 DS_CARTE_SCOLAIRE = "fr-en-carte-scolaire-colleges-publics"
 
 def norm_dep(d):
@@ -363,8 +445,9 @@ def norm_dep(d):
     s = str(d or "").strip().upper()
     if not s:
         return ""
-    if s in ("2A", "2B"):
-        return s
+    # la Corse arrive en "02A"/"02B" dans l'annuaire, mais l'app cherche "2A"/"2B"
+    if re.fullmatch(r"0?2[AB]", s):
+        return s[-2:]
     if re.fullmatch(r"\d{3}", s) and s.startswith("0"):
         s = s[1:]
     if re.fullmatch(r"\d{1,2}", s):
@@ -786,6 +869,9 @@ if __name__ == "__main__":
     build_establishments()
     build_ips()
     build_exams()
+    build_dep_bundles()
+    build_secteurs()
     build_gazetteer()
     build_stations()
+    write_version()
     print("Terminé.")

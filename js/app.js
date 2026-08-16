@@ -1,5 +1,5 @@
 // js/app.js — recherche + filtres + stations IDFM/SNCF
-import Store from "./store.js?v=24";
+import Store from "./store.js?v=27";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=5";
 import { geocode } from "./geocode.js?v=3";
 import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur } from "./ui.js?v=6";
@@ -85,19 +85,24 @@ syncMapSize();
 /* ───────── Résolution adresse/ville/CP -> point ───────── */
 async function resolvePoint(q){
   const s = String(q || "").trim();
-  if (!Store.ready) { try { await Store.load(); } catch{} }
 
-  const CP_RE = /^\d{5}$/;
-  if (CP_RE.test(s) && Array.isArray(Store.gazetteer)){
-    const cp = s;
-    const cand = Store.gazetteer.find(c => Array.isArray(c.cps) && c.cps.includes(cp));
-    if (cand) return { lat: cand.lat, lon: cand.lon, label: `${cand.name} (${cp})` };
+  // La BAN résout adresses, communes ET codes postaux, et renvoie le code INSEE
+  // dont dépend la carte scolaire : on la sollicite en premier. Le répertoire
+  // local ne sert plus que de secours, et n'est donc plus chargé d'office.
+  try {
+    const g = await geocode(s);
+    if (g && Number.isFinite(g.lat) && Number.isFinite(g.lon)) return g;
+  } catch { /* on tente le répertoire local */ }
+
+  await Store.loadGazetteer();
+  if (/^\d{5}$/.test(s)){
+    const cand = Store.gazetteer.find(c => Array.isArray(c.cps) && c.cps.includes(s));
+    if (cand) return { lat: cand.lat, lon: cand.lon, label: `${cand.name} (${s})` };
   }
-
   const city = Store.findCommune(s);
   if (city) return { lat: city.lat, lon: city.lon, label: city.name };
 
-  return await geocode(q);
+  throw new Error("Adresse introuvable");
 }
 
 /* ───────── État recherches ───────── */
@@ -135,7 +140,7 @@ function refreshStations(){
 /* dept top 10 */
 async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   const dep = normDept(depInput);
-  if (!Store.ready) await Store.load();
+  await Store.loadDeps([dep]);
 
   Stations.clear();
   clearSecteur();
@@ -196,11 +201,15 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
 
 /* autour d’une adresse/ville/CP */
 async function runAround(q, radiusKm, sectorFilter, typesWanted){
-  if (!Store.ready) await Store.load();
+  await Store.load();
 
   const { lat, lon, label, address } = await resolvePoint(q);
   addrLat = lat; addrLon = lon;
   clearSecteur();
+
+  // Charge les départements que le cercle recoupe — 3 km étant le rayon maximal
+  // que la recherche peut tenter, on couvre d'un coup les élargissements.
+  await Store.loadDeps(Store.depsForCircle(lat, lon, 3000));
 
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
   addrCircle = drawAddressCircle(map, lat, lon, radiusKm * 1000);
@@ -340,6 +349,7 @@ for (const id of Object.values(MODE_IDS)){
 }
 
 // précharge au besoin
+// n'amorce que l'index des départements (quelques Ko), pas les données
 document.getElementById('addr').addEventListener('focus', async () => {
   if (!Store.ready){ try { await Store.load(); } catch{} }
 });

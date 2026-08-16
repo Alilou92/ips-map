@@ -11,6 +11,8 @@ const isFiniteNum = (x) => Number.isFinite(x);
 /* normalise un code dép (01, 94, 2A/2B, 971…976) */
 function normDeptLocal(d) {
   let s = String(d || "").trim().toUpperCase();
+  // la Corse arrive en "02A"/"02B" dans l'annuaire, l'app raisonne en "2A"/"2B"
+  if (/^0?2[AB]$/.test(s)) return s.slice(-2);
   if (/^\d{3}$/.test(s) && s.startsWith("0")) s = s.slice(1);
   if (s === "2A" || s === "2B") return s;
   if (/^\d{1,2}$/.test(s)) return s.padStart(2, "0");
@@ -174,18 +176,25 @@ function normalizeIps(ipsRaw) {
 }
 
 const Store = {
-  ready: false,
-  _loading: null,
+  ready: false,          // index des départements chargé
+  version: "",           // cache-buster daté, écrit par le build
 
-  establishments: [],
+  index: null,           // { deps: { "94": {bbox:[latMin,lonMin,latMax,lonMax], n} }, examsMeta }
+  loadedDeps: new Set(),
+
+  establishments: [],    // union des départements déjà chargés
   ipsMap: new Map(),
-  examsMap: new Map(),   // UAI -> { brevet?:{t,tp,va,n}, bac_gt?:{...}, bac_pro?:{...} }
-  examsMeta: {},         // { brevet:{annee,prec,national,n}, ... }
+  examsMap: new Map(),
+  examsMeta: {},
   byDept: new Map(),
   byCP: new Map(),
   gazetteer: [],
 
-  /** Charge une seule fois, même si appelé en parallèle (focus + clic Chercher) */
+  _loading: null,
+  _depPromises: new Map(),
+  _gazPromise: null,
+
+  /** Amorçage : version + index des départements. Quelques kilo-octets. */
   load() {
     if (this.ready) return Promise.resolve();
     if (!this._loading) {
@@ -195,100 +204,102 @@ const Store = {
   },
 
   async _load() {
-    const [estRes, ipsRes, gazRes] = await Promise.all([
-      fetch(`./data/establishments.min.json?v=${DATA_VERSION}`),
-      fetch(`./data/ips.min.json?v=${DATA_VERSION}`),
-      fetch(`./data/gazetteer.min.json?v=${DATA_VERSION}`)
-    ]);
-    if (!estRes.ok) throw new Error(`Impossible de charger establishments.min.json (${estRes.status})`);
-    if (!ipsRes.ok) throw new Error(`Impossible de charger ips.min.json (${ipsRes.status})`);
-    if (!gazRes.ok) throw new Error(`Impossible de charger gazetteer.min.json (${gazRes.status})`);
-
-    const [estRaw, ipsRaw, gazRaw] = await Promise.all([ estRes.json(), ipsRes.json(), gazRes.json() ]);
-
-    // normalisation + secteur canonisé ici
-    const est = Array.isArray(estRaw) ? estRaw.map(normalizeEstab).filter(Boolean) : [];
-    const ipsMap = normalizeIps(ipsRaw);
-    const gaz = Array.isArray(gazRaw) ? gazRaw.map(normalizeGazetteerEntry).filter(Boolean) : [];
-
-    this.establishments = est;
-    this.ipsMap = ipsMap;
-    this.gazetteer = gaz;
-
-    // Résultats aux examens : facultatif, l'app reste utilisable sans.
-    // L'échec est journalisé explicitement — la version précédente de cette
-    // fonctionnalité échouait en silence et personne ne l'a vu pendant des mois.
-    await this._loadExams();
-
-    // index
-    this.byDept.clear();
-    this.byCP.clear();
-    for (const e of est) {
-      const dep = normDeptLocal(e.dep || "");
-      if (dep) {
-        if (!this.byDept.has(dep)) this.byDept.set(dep, []);
-        this.byDept.get(dep).push(e);
-      }
-      if (e.cp) {
-        if (!this.byCP.has(e.cp)) this.byCP.set(e.cp, []);
-        this.byCP.get(e.cp).push(e);
-      }
-    }
-
-    this.ready = true;
-
-    // stats console (diagnostic)
+    // version.json n'est jamais mis en cache : c'est lui qui date tout le reste,
+    // ce qui évite d'incrémenter un numéro à la main à chaque rebuild.
     try {
-      const total = this.establishments.length;
-      const pub = this.establishments.filter(e => sectorToken(e.secteur) === "public").length;
-      const pri = this.establishments.filter(e => sectorToken(e.secteur) === "prive").length;
-      const none = total - pub - pri;
-      console.debug(`[Store] établissements: ${total} • Public: ${pub} • Privé: ${pri} • Sans info: ${none}`);
+      const r = await fetch("./data/version.json", { cache: "no-store" });
+      if (r.ok) this.version = (await r.json()).v || "";
+    } catch { /* pas bloquant : on repart sur des URL sans suffixe */ }
 
-      const types = ["ecole","college","lycee"];
-      for (const t of types) {
-        const tot = this.establishments.filter(e => e.type === t).length;
-        const withIps = this.establishments.filter(e => e.type === t && Number.isFinite(this.ipsMap.get(e.uai))).length;
-        const pct = Math.round(100 * withIps / Math.max(1, tot));
-        console.debug(`[IPS] Couverture ${t}: ${withIps}/${tot} (${pct}%)`);
-      }
-
-      for (const t of ["college","lycee"]) {
-        const tot = this.establishments.filter(e => e.type === t).length;
-        const withEx = this.establishments.filter(e => e.type === t && this.examsMap.has(e.uai)).length;
-        const pct = Math.round(100 * withEx / Math.max(1, tot));
-        console.debug(`[Exams] Couverture ${t}: ${withEx}/${tot} (${pct}%)`);
-      }
-    } catch {}
+    const res = await fetch(this._url("./data/dep/index.json"));
+    if (!res.ok) throw new Error(`Index des départements indisponible (${res.status})`);
+    this.index = await res.json();
+    this.examsMeta = this.index.examsMeta || {};
+    this.ready = true;
+    console.debug(`[Store] index prêt — ${Object.keys(this.index.deps || {}).length} départements, données du ${this.version}`);
   },
 
-  /** Résultats aux examens — n'interrompt jamais le chargement principal */
-  async _loadExams() {
-    try {
-      const res = await fetch(`./data/exams.min.json?v=${DATA_VERSION}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const raw = await res.json();
+  _url(path) {
+    return this.version ? `${path}?v=${encodeURIComponent(this.version)}` : path;
+  },
 
-      const etab = raw && typeof raw.etab === "object" ? raw.etab : null;
-      if (!etab) throw new Error("format inattendu : clé 'etab' absente");
-
-      const map = new Map();
-      for (const [uai, kinds] of Object.entries(etab)) {
-        const u = String(uai).trim().toUpperCase();
-        const row = {};
-        for (const [kind, v] of Object.entries(kinds || {})) {
-          if (v && Number.isFinite(Number(v.t))) row[kind] = v;
-        }
-        if (u && Object.keys(row).length) map.set(u, row);
+  /** Départements présents dans les cellules que le cercle recoupe.
+      Grille de 0,1° construite au build : règle les rayons à cheval sur une
+      frontière sans table d'adjacence, et sans se laisser piéger par les
+      coordonnées aberrantes de l'annuaire. */
+  depsForCircle(lat, lon, radiusMeters) {
+    const grid = this.index?.grid;
+    if (!grid) return [];
+    const dLat = radiusMeters / 111000;
+    const dLon = radiusMeters / (111000 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+    const out = new Set();
+    const y0 = Math.floor((lat - dLat) * 10), y1 = Math.floor((lat + dLat) * 10);
+    const x0 = Math.floor((lon - dLon) * 10), x1 = Math.floor((lon + dLon) * 10);
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        for (const d of grid[`${y}_${x}`] || []) out.add(d);
       }
-      this.examsMap = map;
-      this.examsMeta = raw.meta || {};
-      console.debug(`[Exams] ${map.size} établissements avec résultats`, this.examsMeta);
-    } catch (err) {
-      this.examsMap = new Map();
-      this.examsMeta = {};
-      console.warn("[Exams] résultats indisponibles :", err.message);
     }
+    return [...out];
+  },
+
+  /** Charge un ou plusieurs départements et les fusionne dans les index. */
+  async loadDeps(deps) {
+    await this.load();
+    const list = (Array.isArray(deps) ? deps : [deps])
+      .map(normDeptLocal)
+      .filter(d => d && !this.loadedDeps.has(d));
+    if (!list.length) return;
+    await Promise.all(list.map(d => this._loadDep(d)));
+  },
+
+  _loadDep(dep) {
+    if (this._depPromises.has(dep)) return this._depPromises.get(dep);
+    const p = (async () => {
+      const res = await fetch(this._url(`./data/dep/${dep}.min.json`));
+      if (!res.ok) { console.warn(`[Store] département ${dep} indisponible (${res.status})`); return; }
+      const b = await res.json();
+
+      const est = Array.isArray(b.etab) ? b.etab.map(normalizeEstab).filter(Boolean) : [];
+      for (const e of est) {
+        this.establishments.push(e);
+        const d = normDeptLocal(e.dep || "");
+        if (d) { if (!this.byDept.has(d)) this.byDept.set(d, []); this.byDept.get(d).push(e); }
+        if (e.cp) { if (!this.byCP.has(e.cp)) this.byCP.set(e.cp, []); this.byCP.get(e.cp).push(e); }
+      }
+      for (const [u, v] of Object.entries(b.ips || {})) {
+        const n = toNum(v);
+        if (isFiniteNum(n)) this.ipsMap.set(String(u).toUpperCase(), n);
+      }
+      for (const [u, v] of Object.entries(b.exams || {})) {
+        if (v && Object.keys(v).length) this.examsMap.set(String(u).toUpperCase(), v);
+      }
+      this.loadedDeps.add(dep);
+      console.debug(`[Store] département ${dep} : ${est.length} établissements`);
+    })();
+    this._depPromises.set(dep, p);
+    return p;
+  },
+
+  /** Le répertoire des communes ne sert que de secours au géocodage : chargé
+      à la demande, il ne pèse plus sur le premier affichage. */
+  loadGazetteer() {
+    if (this.gazetteer.length) return Promise.resolve();
+    if (!this._gazPromise) {
+      this._gazPromise = (async () => {
+        try {
+          const res = await fetch(this._url("./data/gazetteer.min.json"));
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const raw = await res.json();
+          this.gazetteer = Array.isArray(raw) ? raw.map(normalizeGazetteerEntry).filter(Boolean) : [];
+          console.debug(`[Store] gazetteer : ${this.gazetteer.length} communes`);
+        } catch (e) {
+          console.warn("[Store] gazetteer indisponible :", e.message);
+          this._gazPromise = null;
+        }
+      })();
+    }
+    return this._gazPromise;
   },
 
   /** Résultats d'un établissement, ou null */

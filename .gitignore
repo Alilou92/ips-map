@@ -1,0 +1,7 @@
+# Intermédiaires de build : découpés en data/dep/ avant d'être livrés
+data/establishments.min.json
+data/ips.min.json
+data/exams.min.json
+
+__pycache__/
+.claude/
