@@ -64,9 +64,17 @@ export function prixRows(prix, meta = {}) {
 }
 
 /** Bloc HTML du prix au m² pour une commune */
-export function prixHtml(prix, meta = {}, commune = "", dep = null) {
+export function prixHtml(prix, meta = {}, commune = "", dep = null, precisionRequise = null) {
   const rows = prixRows(prix, meta);
   if (!rows.length) {
+    // Paris/Lyon/Marseille cherchées seules : le code INSEE de la ville-mère
+    // n'existe dans aucune donnée, ce n'est pas un manque de ventes.
+    if (precisionRequise) {
+      return `<div class="prix"><div class="prix-h">Prix au m²</div>
+        <div class="prix-sub">« ${esc(precisionRequise)} » compte plusieurs arrondissements :
+        indique-en un (ex. « ${esc(precisionRequise)} 15e »), un code postal, ou une adresse
+        complète pour voir le prix au m².</div></div>`;
+    }
     // Absence de source et absence de ventes ne se disent pas pareil
     const absents = Array.isArray(meta.absents) ? meta.absents : [];
     if (dep && absents.includes(String(dep))) {

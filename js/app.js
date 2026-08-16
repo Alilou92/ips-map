@@ -8,6 +8,18 @@ import { makeStationsController } from "./stations.js?v=25";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";
 
 /* helpers */
+
+/**
+ * Paris, Lyon et Marseille sont les seules "villes à arrondissements" du
+ * droit français (loi PLM) : la BAN géocode leur nom seul sur le code INSEE
+ * de la ville-mère (75056, 69123, 13055), qui n'apparaît dans aucune de nos
+ * données — DVF et la carte scolaire ne connaissent que les arrondissements
+ * (75101…75120, 69381…69389, 13201…13216). Sans ce garde-fou, une recherche
+ * "Paris" toute seule affichait "moins de 5 ventes recensées" : c'est faux,
+ * il y en a des dizaines de milliers, c'est le code qui ne correspond à rien.
+ */
+const VILLES_ARRONDISSEMENTS = { "75056": "Paris", "69123": "Lyon", "13055": "Marseille" };
+
 const DEPT_RE = /^(?:0?[1-9]|[1-8]\d|9[0-5]|2A|2B|97[1-6])$/i;
 function normDept(q){
   let s = String(q).trim().toUpperCase();
@@ -310,11 +322,13 @@ function showPrix(address){
   // secteur, qui est affiché juste après
   try {
     if (!address || !address.citycode) return;
+    const villeAmbigue = VILLES_ARRONDISSEMENTS[address.citycode];
     renderPrix({
-      prix: Store.prixFor?.(address.citycode),
+      prix: villeAmbigue ? null : Store.prixFor?.(address.citycode),
       meta: Store.prixMeta,
       commune: address.city || "",
-      dep: address.dep || null
+      dep: address.dep || null,
+      precisionRequise: villeAmbigue || null
     });
   } catch (e) {
     console.warn("[Prix] indisponible :", e.message);
@@ -324,6 +338,15 @@ function showPrix(address){
 /** Collège de secteur : seule une vraie adresse permet de le déterminer */
 async function showSecteur(address, label){
   if (!address || !address.citycode) return;
+
+  const villeAmbigue = VILLES_ARRONDISSEMENTS[address.citycode];
+  if (villeAmbigue){
+    // Ville à arrondissements sans plus de précision : pas la peine
+    // d'interroger la carte scolaire, le code INSEE n'y figure pas non plus.
+    renderSecteur({ res: { precisionRequise: villeAmbigue }, label });
+    return;
+  }
+
   let res = null;
   try { res = await collegeDeSecteur(address); }
   catch (e) { console.warn("[Secteur] indisponible :", e.message); return; }

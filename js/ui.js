@@ -1,6 +1,6 @@
 // js/ui.js
 import { examSummary } from "./exams.js?v=5";
-import { prixHtml } from "./prix.js?v=3";
+import { prixHtml } from "./prix.js?v=4";
 import { secteurIndicsHtml } from "./secteurIndics.js?v=2";
 
 export function showErr(msg){
@@ -59,6 +59,17 @@ export function renderSecteur({ res, etab, ips, exams, examsMeta, label, onClick
   const el = document.createElement('div');
   el.className = "secteur";
 
+  if (res.precisionRequise){
+    // Paris/Lyon/Marseille cherchées seules : le code INSEE de la ville-mère
+    // ne figure dans aucune carte scolaire (elle ne connaît que les
+    // arrondissements) — à ne pas confondre avec un vrai département non
+    // couvert (res.indisponible, message différent).
+    el.innerHTML = `<div class="secteur-h">Collège de secteur</div>
+      <div class="secteur-sub">« ${res.precisionRequise} » compte plusieurs arrondissements :
+      indique-en un (ex. « ${res.precisionRequise} 15e »), un code postal, ou une adresse
+      complète.</div>`;
+    box.appendChild(el); makeCollapsible(box, 'secteur-h'); return;
+  }
   if (res.indisponible){
     el.innerHTML = `<div class="secteur-h">Collège de secteur</div>
       <div class="secteur-sub">Carte scolaire non publiée pour le département ${res.dep}.</div>`;
@@ -107,10 +118,10 @@ export function renderSecteur({ res, etab, ips, exams, examsMeta, label, onClick
 }
 
 /** Bloc « prix au m² » de la commune cherchée */
-export function renderPrix({ prix, meta, commune, dep }){
+export function renderPrix({ prix, meta, commune, dep, precisionRequise }){
   const box = document.getElementById('prixBox');
   if (!box) return;
-  box.innerHTML = prixHtml(prix ?? null, meta, commune, dep);
+  box.innerHTML = prixHtml(prix ?? null, meta, commune, dep, precisionRequise);
   makeCollapsible(box, 'prix-h');
 }
 
