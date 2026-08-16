@@ -124,8 +124,11 @@ TRAM_COLORS = {
 }
 TRANSILIEN_COLORS = {"H":"#84653D","J":"#CEC73D","K":"#9B9842","L":"#C4A4CC","N":"#00B297","P":"#F58F53","R":"#F49FB3","U":"#B6134C"}
 
+# TER et grandes lignes : deux teintes volontairement absentes de la palette
+# IDFM. Le magenta du TGV était à un ΔE de 2 du métro 4, et le gris du TER se
+# confondait avec le « gris = IPS non publié » de la légende.
 DEFAULT_BY_MODE = {
-    "metro":"#0055C8","rer":"#5091CB","tram":"#00A092","transilien":"#84653D","ter":"#AAAAAA","tgv":"#A1006B"
+    "metro":"#0055C8","rer":"#5091CB","tram":"#00A092","transilien":"#84653D","ter":"#0F4C5C","tgv":"#0A2A5E"
 }
 
 def color_for(mode: str, line: Optional[str], color_hex: Optional[str]) -> Optional[str]:

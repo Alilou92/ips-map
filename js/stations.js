@@ -4,7 +4,7 @@
 import { distanceMeters } from "./util.js?v=3";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "23";
+const DATA_VERSION = "24";
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
@@ -41,8 +41,8 @@ const DEFAULT_BY_MODE = {
   rer: "#5091CB",
   tram: "#00A092",
   transilien: "#84653D",
-  ter: "#AAAAAA",
-  tgv: "#A1006B",
+  ter: "#0F4C5C",   // pétrole sombre — absent de la palette IDFM
+  tgv: "#0A2A5E",   // marine profond — idem
 };
 
 // zoom mini pour afficher les étiquettes permanentes
