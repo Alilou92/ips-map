@@ -1,0 +1,56 @@
+name: Rafraîchir les données
+
+# Les sources bougent quelques fois par an (IPS et résultats d'examens une fois,
+# l'annuaire en continu mais lentement). Un passage mensuel suffit largement —
+# interroger les API à chaque recherche coûterait cher pour rien.
+on:
+  schedule:
+    - cron: "0 4 5 * *"      # le 5 de chaque mois, 04:00 UTC
+  workflow_dispatch:          # déclenchement manuel depuis l'onglet Actions
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # annuaire, IPS, examens, bundles départementaux, carte scolaire,
+      # communes, et une première passe stations
+      - name: Construire les données
+        run: python3 tools/build.py
+
+      # stations : la version GTFS porte les couleurs officielles de ligne et
+      # les communes, elle doit passer après et écraser la précédente
+      - name: Reconstruire les stations depuis le GTFS IDFM
+        run: python3 scripts/build_stations.py
+
+      # write_version en dernier pour que le cache-buster couvre tout
+      - name: Dater le jeu de données
+        run: python3 -c "import sys; sys.path.insert(0,'tools'); import build; build.write_version()"
+
+      - name: Publier si quelque chose a changé
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          # version.json change à chaque exécution : seul, il ne justifie pas un commit
+          if git diff --cached --quiet -- . ':!data/version.json'; then
+            echo "Aucune donnée modifiée — rien à publier."
+            git reset
+            exit 0
+          fi
+          git commit -m "chore(data): rafraîchissement automatique du $(date -u +%d/%m/%Y)"
+          git push
