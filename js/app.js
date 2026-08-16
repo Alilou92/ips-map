@@ -1,8 +1,8 @@
 // js/app.js — recherche + filtres + stations IDFM/SNCF
-import Store from "./store.js?v=27";
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=5";
+import Store from "./store.js?v=28";
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=8";
 import { geocode } from "./geocode.js?v=3";
-import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur } from "./ui.js?v=6";
+import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur } from "./ui.js?v=9";
 import { collegeDeSecteur } from "./secteur.js?v=2";
 import { makeStationsController } from "./stations.js?v=24";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";

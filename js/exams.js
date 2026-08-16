@@ -37,13 +37,37 @@ function vaClass(va) {
   return "va-neu";
 }
 
-/** Décrit une VA en clair, pour l'attribut title */
-function vaTitle(va) {
+/** Décrit une VA en clair, pour l'attribut title.
+    r porte vaN / vaMin / vaMax : la valeur affichée est une moyenne, et son
+    amplitude dit s'il faut la prendre au sérieux. */
+function vaTitle(va, r = {}) {
   const v = Number(va);
   if (!Number.isFinite(v)) return "";
-  if (v === 0) return "Résultat conforme à ce qu'on attendait vu le profil social des élèves";
-  const sens = v > 0 ? "au-dessus" : "en dessous";
-  return `${Math.abs(v)} points ${sens} du résultat attendu vu le profil social des élèves`;
+
+  // la pastille arrondit à l'entier, l'infobulle donne la valeur exacte —
+  // le mot « moyenne » qui suit évite que les deux paraissent se contredire
+  const exact = String(Math.abs(v)).replace(".", ",");
+  const base = v === 0
+    ? "Résultat conforme à ce qu'on attendait vu le profil social des élèves"
+    : `${exact} points ${v > 0 ? "au-dessus" : "en dessous"} du résultat attendu vu le profil social des élèves`;
+
+  const bouts = [base];
+  const n = Number(r.vaN);
+  if (Number.isFinite(n) && n > 1) {
+    const periode = Array.isArray(r.sessions) && r.sessions.length
+      ? ` (${r.sessions[0]}-${r.sessions[r.sessions.length - 1]})` : "";
+    let phrase = `Moyenne de ${n} sessions${periode}`;
+    if (Number.isFinite(Number(r.vaMin)) && Number.isFinite(Number(r.vaMax))) {
+      phrase += `, observée entre ${fmtVa(r.vaMin)} et ${fmtVa(r.vaMax)}`;
+    }
+    bouts.push(phrase);
+    if (Number.isFinite(Number(r.vaMin)) && Number(r.vaMax) - Number(r.vaMin) >= 10) {
+      bouts.push("écart important d'une année sur l'autre, à prendre avec prudence");
+    }
+  } else if (n === 1) {
+    bouts.push("une seule session disponible, indicateur peu fiable");
+  }
+  return bouts.join(". ") + ".";
 }
 
 /** Lignes exploitables pour un établissement, triées */
@@ -60,6 +84,10 @@ export function examRows(exams, meta = {}) {
       taux: Number(e.t),
       prec: Number.isFinite(Number(e.tp)) ? Number(e.tp) : null,
       va: Number.isFinite(Number(e.va)) ? Number(e.va) : null,
+      vaN: Number.isFinite(Number(e.vaN)) ? Number(e.vaN) : null,
+      vaMin: Number.isFinite(Number(e.vaMin)) ? Number(e.vaMin) : null,
+      vaMax: Number.isFinite(Number(e.vaMax)) ? Number(e.vaMax) : null,
+      sessions: Array.isArray(m.sessions) ? m.sessions : null,
       mention: Number.isFinite(Number(e.m)) ? Number(e.m) : null,
       candidats: Number.isFinite(Number(e.n)) ? Number(e.n) : null,
       annee: m.annee ?? null,
@@ -87,7 +115,9 @@ export function examHtml(exams, meta = {}) {
 
     const va = fmtVa(r.va);
     const badge = va === null ? ""
-      : ` <span class="va ${vaClass(r.va)}" title="${esc(vaTitle(r.va))}">VA ${esc(va)}</span>`;
+      : ` <span class="va ${vaClass(r.va)}" title="${esc(vaTitle(r.va, r))}">VA ${esc(va)}</span>`;
+    if (r.vaN > 1) bits.push(`VA moyennée sur ${r.vaN} sessions${
+      r.vaMin != null ? ` (${fmtVa(r.vaMin)} à ${fmtVa(r.vaMax)})` : ""}`);
 
     return `<div class="exam-row">
       <span class="exam-label">${esc(r.label)}${r.annee ? " " + r.annee : ""}</span>
@@ -109,7 +139,7 @@ export function examSummary(exams, meta = {}) {
     text: `${r.label} : ${pct(r.taux)}`,
     va,
     vaClass: vaClass(r.va),
-    title: vaTitle(r.va),
+    title: vaTitle(r.va, r),
   };
 }
 

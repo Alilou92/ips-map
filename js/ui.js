@@ -1,5 +1,5 @@
 // js/ui.js
-import { examSummary } from "./exams.js?v=1";
+import { examSummary } from "./exams.js?v=4";
 
 export function showErr(msg){
   const el=document.getElementById('err'); if(!el) return;

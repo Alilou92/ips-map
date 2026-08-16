@@ -1,6 +1,6 @@
 // js/map.js — Leaflet helpers (fond HTTPS + utilitaires)
 import { round1 } from "./util.js?v=3";
-import { examHtml } from "./exams.js?v=1";
+import { examHtml } from "./exams.js?v=4";
 
 /* ---------- fond de carte ---------- */
 const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";

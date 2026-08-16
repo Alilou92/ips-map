@@ -24,6 +24,9 @@ GEO_COMMUNES = "https://geo.api.gouv.fr/communes?fields=centre,nom,code,codesPos
 # Chaque source porte le taux de réussite ET la "valeur ajoutée" : l'écart entre
 # le résultat obtenu et celui attendu compte tenu du profil social des élèves.
 # C'est la VA qui distingue un bon établissement d'un établissement à bon public.
+# nombre de sessions retenues pour moyenner la valeur ajoutée
+SESSIONS_VA = 4
+
 DS_EXAMS = {
     "brevet": {
         "dataset": "fr-en-indicateurs-valeur-ajoutee-colleges",
@@ -292,9 +295,17 @@ def _to_float(x):
 def build_exams():
     """data/exams.min.json — taux de réussite + valeur ajoutée par établissement.
 
-    Sortie : { "meta": {kind: {annee, prec, national, n}}, "etab": {UAI: {kind: {...}}} }
-    avec t = taux de la dernière session, tp = session précédente,
-    va = valeur ajoutée, m = taux de mention (lycées), n = candidats/présents.
+    Sortie : { "meta": {kind: {annee, prec, national, n, sessions}},
+               "etab": {UAI: {kind: {t, tp, va, vaN, vaMin, vaMax, m, n}}} }
+
+    t = taux de la dernière session, tp = session précédente, m = taux de
+    mention (lycées), n = candidats/présents.
+
+    va est la MOYENNE de la valeur ajoutée sur les dernières sessions, pas la
+    dernière valeur : sur un collège de 60 candidats elle passe de +7 à -4 sans
+    que rien n'ait changé dans l'établissement. vaMin/vaMax donnent l'amplitude
+    — un écart large signale un indicateur à ne pas prendre au pied de la
+    lettre, vaN le nombre de sessions retenues.
 
     Aucun équivalent n'existe pour le premier degré : les évaluations
     nationales ne sont pas publiées par école. Le fichier ne couvre donc
@@ -330,25 +341,47 @@ def build_exams():
         courant = par_annee[cur]
         precedent = par_annee.get(prev, {})
 
+        # IVAC couvre 2022-2025, IVAL remonte à 2020 : on borne à 4 sessions
+        # pour que les deux niveaux soient comparables et qu'on ne fasse pas
+        # peser des millésimes trop anciens sur un établissement qui a changé.
+        retenues = annees[-SESSIONS_VA:]
+        va_par_uai = {}
+        for y in retenues:
+            for u, v in par_annee[y].items():
+                if v["va"] is not None:
+                    va_par_uai.setdefault(u, []).append(v["va"])
+
         # taux national = moyenne pondérée par le nombre de candidats
         num = sum(v["t"] * v["n"] for v in courant.values() if v["n"])
         den = sum(v["n"] for v in courant.values() if v["n"])
         national = round(num / den, 1) if den else None
 
-        meta[kind] = {"annee": cur, "prec": prev, "national": national, "n": len(courant)}
+        meta[kind] = {"annee": cur, "prec": prev, "national": national,
+                      "n": len(courant), "sessions": retenues}
 
         for u, v in courant.items():
             row = {"t": v["t"]}
             tp = precedent.get(u, {}).get("t")
             if tp is not None:  row["tp"] = tp
-            if v["va"] is not None:  row["va"] = round(v["va"], 1)
+            vals = va_par_uai.get(u)
+            if vals:
+                row["va"] = round(sum(vals) / len(vals), 1)
+                row["vaN"] = len(vals)
+                if len(vals) > 1:
+                    row["vaMin"] = round(min(vals), 1)
+                    row["vaMax"] = round(max(vals), 1)
             if v["m"] is not None:   row["m"] = round(v["m"], 1)
             if v["n"]:               row["n"] = int(v["n"])
             etab.setdefault(u, {})[kind] = row
 
-        avec_va = sum(1 for v in courant.values() if v["va"] is not None)
+        avec_va = sum(1 for u in courant if u in va_par_uai)
+        plusieurs = sum(1 for u in courant if len(va_par_uai.get(u, [])) > 1)
+        amplitudes = [max(v) - min(v) for u, v in va_par_uai.items() if len(v) > 1]
+        moy_amp = round(sum(amplitudes) / len(amplitudes), 1) if amplitudes else 0
         print(f"  • {kind}: {len(courant)} établissements en {cur} "
-              f"(précédent {prev}) — national {national}% — valeur ajoutée sur {avec_va}")
+              f"(précédent {prev}) — national {national}% — VA sur {avec_va}, "
+              f"dont {plusieurs} moyennés sur {retenues[0]}-{retenues[-1]} "
+              f"(amplitude moyenne {moy_amp} pts)")
         time.sleep(0.05)
 
     out = {"meta": meta, "etab": etab}
