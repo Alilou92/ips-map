@@ -397,7 +397,11 @@ def build_dep_bundles():
     grille = {}
     index, total = {}, 0
     for dep, etabs in sorted(par_dep.items()):
-        uais = {e["uai"] for e in etabs}
+        # trié, pas un set : l'ordre d'itération d'un set de chaînes varie d'une
+        # exécution à l'autre (PYTHONHASHSEED), ce qui réécrivait les 105 bundles
+        # à chaque build et faisait commiter 12 Mo de bruit au workflow mensuel
+        # alors qu'aucune donnée n'avait bougé.
+        uais = sorted({e["uai"] for e in etabs})
         bundle = {
             "dep": dep,
             "etab": etabs,
