@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml"
         href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%230f1320"/><text x="50%" y="52%" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="28" fill="%234ea1ff">IPS</text></svg>'>
 
-  <link rel="stylesheet" href="./assets/style.css?v=50" />
+  <link rel="stylesheet" href="./assets/style.css?v=51" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
@@ -44,14 +44,11 @@
       </select>
     </label>
 
-    <label for="types">Types
-      <select id="types" autocomplete="off" multiple size="3" title="Ctrl/Cmd-clic pour multi"
-              aria-label="Types d'établissements">
-        <option value="ecole" selected>École</option>
-        <option value="college" selected>Collège</option>
-        <option value="lycee" selected>Lycée</option>
-      </select>
-    </label>
+    <div class="modes" role="group" aria-label="Types d'établissements">
+      <label><input id="t_ecole" type="checkbox" checked /> École</label>
+      <label><input id="t_college" type="checkbox" checked /> Collège</label>
+      <label><input id="t_lycee" type="checkbox" checked /> Lycée</label>
+    </div>
 
     <label for="secteur">Secteur
       <select autocomplete="off" id="secteur" aria-label="Secteur">
@@ -115,8 +112,8 @@
 
   <!-- synchronisé avec stations.js / app.js -->
 
-<script>window.APP_VERSION = 'v70';</script>
-<script type="module" src="./js/app.js?v=v70"></script>
+<script>window.APP_VERSION = 'v71';</script>
+<script type="module" src="./js/app.js?v=v71"></script>
 
 
 </body>

@@ -18,6 +18,34 @@ export function clearErr(){
 export function setCount(txt){ const el=document.getElementById('count'); if(el) el.textContent = txt; }
 
 /**
+ * Rend le premier bloc de `box` repliable, sans dupliquer son titre : le
+ * titre (`.prix-h` ou `.secteur-h`) devient le <summary> natif. Ouvert par
+ * défaut — rien ne change visuellement tant qu'on ne clique pas — mais
+ * l'utilisateur peut replier pour retrouver de la place au-dessus de la
+ * liste des résultats. Dégrade silencieusement si la structure attendue
+ * (le titre en premier enfant direct) est absente.
+ */
+function makeCollapsible(box, headerClass){
+  const inner = box.firstElementChild;
+  if (!inner) return;
+  const header = inner.querySelector(`:scope > .${headerClass}`);
+  if (!header) return;
+
+  const details = document.createElement('details');
+  details.className = inner.className + ' collapsible';
+  details.open = true;
+
+  const summary = document.createElement('summary');
+  summary.className = header.className;   // conserve le style visuel du titre
+  while (header.firstChild) summary.appendChild(header.firstChild);
+  header.remove();
+
+  details.appendChild(summary);
+  while (inner.firstChild) details.appendChild(inner.firstChild);
+  inner.replaceWith(details);
+}
+
+/**
  * Bloc « collège de secteur » au-dessus des résultats.
  * res  = retour de collegeDeSecteur(), etab = l'établissement correspondant.
  */
@@ -34,7 +62,7 @@ export function renderSecteur({ res, etab, ips, exams, examsMeta, label, onClick
   if (res.indisponible){
     el.innerHTML = `<div class="secteur-h">Collège de secteur</div>
       <div class="secteur-sub">Carte scolaire non publiée pour le département ${res.dep}.</div>`;
-    box.appendChild(el); return;
+    box.appendChild(el); makeCollapsible(box, 'secteur-h'); return;
   }
   if (res.ambigu){
     const noms = (choix || []).filter(Boolean);
@@ -45,7 +73,7 @@ export function renderSecteur({ res, etab, ips, exams, examsMeta, label, onClick
       <div class="secteur-sub">${raison}</div>
       ${noms.length ? `<div class="secteur-name" style="margin-top:4px">${
         noms.map(e => e.name || e.uai).join("<br>")}</div>` : ""}`;
-    box.appendChild(el); return;
+    box.appendChild(el); makeCollapsible(box, 'secteur-h'); return;
   }
   if (!etab) return;
 
@@ -64,10 +92,18 @@ export function renderSecteur({ res, etab, ips, exams, examsMeta, label, onClick
     ${secteurIndicsHtml({ ipsSerie, secteurPrix, meta: prixMeta || {} })}`;
 
   if (typeof onClick === "function"){
-    el.style.cursor = "pointer";
-    el.addEventListener('click', onClick);
+    // Le clic reste précis sur le nom du collège, pas sur toute la carte :
+    // makeCollapsible() déplace le contenu vers un <details>, et un clic sur
+    // la courbe de prix ne doit pas être interprété comme "centrer la carte".
+    const nameEl = el.querySelector('.secteur-name');
+    if (nameEl){
+      nameEl.style.cursor = "pointer";
+      nameEl.title = "Centrer la carte sur ce collège";
+      nameEl.addEventListener('click', onClick);
+    }
   }
   box.appendChild(el);
+  makeCollapsible(box, 'secteur-h');
 }
 
 /** Bloc « prix au m² » de la commune cherchée */
@@ -75,6 +111,7 @@ export function renderPrix({ prix, meta, commune, dep }){
   const box = document.getElementById('prixBox');
   if (!box) return;
   box.innerHTML = prixHtml(prix ?? null, meta, commune, dep);
+  makeCollapsible(box, 'prix-h');
 }
 
 export function clearPrix(){

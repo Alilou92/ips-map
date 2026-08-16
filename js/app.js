@@ -2,7 +2,7 @@
 import Store from "./store.js?v=30";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=9";
 import { geocode } from "./geocode.js?v=5";
-import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur, renderPrix, clearPrix } from "./ui.js?v=13";
+import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur, renderPrix, clearPrix } from "./ui.js?v=14";
 import { collegeDeSecteur } from "./secteur.js?v=2";
 import { makeStationsController } from "./stations.js?v=25";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";
@@ -131,6 +131,23 @@ function getModesWanted(){
   for (const [mode, id] of Object.entries(MODE_IDS)){
     const el = document.getElementById(id);
     if (el && el.checked) s.add(mode);
+  }
+  return s;
+}
+
+/* cases à cocher pour les types d'établissement — remplace l'ancien
+   <select multiple> : un clic simple y désélectionnait tout le reste, et
+   c'était irrécupérable sur mobile (pas de Ctrl+clic tactile). */
+const TYPE_IDS = {
+  ecole: "t_ecole",
+  college: "t_college",
+  lycee: "t_lycee",
+};
+function getTypesWanted(){
+  const s = new Set();
+  for (const [type, id] of Object.entries(TYPE_IDS)){
+    const el = document.getElementById(id);
+    if (el && el.checked) s.add(type);
   }
   return s;
 }
@@ -336,8 +353,8 @@ async function runSearch(){
   const q = document.getElementById('addr').value.trim();
   const radiusKm = parseFloat(document.getElementById('radiusKm').value);
   const sectorFilter = normalizeSectorFromSelect(document.getElementById('secteur').value);
-  const typesSel = Array.from(document.getElementById('types').selectedOptions).map(o => o.value);
-  const typesWanted = new Set(typesSel.length ? typesSel : ["ecole","college","lycee"]);
+  const typesChecked = getTypesWanted();
+  const typesWanted = typesChecked.size ? typesChecked : new Set(["ecole","college","lycee"]);
   if (!q){ showErr("Saisis une adresse, une ville ou un code département"); return; }
 
   const token = ++_searchToken;
@@ -371,7 +388,10 @@ document.getElementById('go').addEventListener('click', runSearch);
 document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
 document.getElementById('secteur').addEventListener('change', rerunIfQuery);
 document.getElementById('radiusKm').addEventListener('change', rerunIfQuery);
-document.getElementById('types').addEventListener('change', rerunIfQuery);
+for (const id of Object.values(TYPE_IDS)){
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', rerunIfQuery);
+}
 
 // (stations) écoute les cases à cocher
 for (const id of Object.values(MODE_IDS)){

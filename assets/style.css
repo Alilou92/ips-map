@@ -295,6 +295,14 @@ body{
 .prix-sub{ opacity:.7;font-size:11px; }
 .prix-note{ opacity:.6;font-size:11px;margin-top:6px; }
 
+/* Blocs Prix / Collège de secteur repliables : <details> natif, ouvert par
+   défaut — rien ne change tant qu'on ne clique pas sur le titre. */
+.collapsible > summary{
+  cursor:pointer;
+  display:list-item;   /* garde le triangle natif malgré la classe .prix-h/.secteur-h */
+}
+.collapsible > summary:hover{ opacity:.85; }
+
 /* ——— Indicateurs du secteur de carte scolaire ——— */
 .indics{ margin-top:8px; padding-top:8px; border-top:1px solid rgba(128,128,128,.3); }
 .ind-row + .ind-row{ margin-top:8px; }
