@@ -4,7 +4,7 @@ import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=
 import { geocode } from "./geocode.js?v=3";
 import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur } from "./ui.js?v=6";
 import { collegeDeSecteur } from "./secteur.js?v=2";
-import { makeStationsController } from "./stations.js?v=23";
+import { makeStationsController } from "./stations.js?v=24";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";
 
 /* helpers */
@@ -115,6 +115,7 @@ async function resolvePoint(q){
 let addrCircle = null;
 let addrLat = null, addrLon = null;
 let lastRadiusMeters = 0;
+let lastDep = null;      // recherche départementale : pas de centre, on filtre par département
 
 /* cases à cocher pour les modes */
 const MODE_IDS = {
@@ -134,10 +135,15 @@ function getModesWanted(){
   return s;
 }
 function refreshStations(){
+  const modesWanted = getModesWanted();
+  if (lastDep){
+    Stations.refresh({ modesWanted, dep: lastDep });
+    return;
+  }
   if (addrLat == null || addrLon == null) return;
   if (!Number.isFinite(lastRadiusMeters) || lastRadiusMeters <= 0) return;
   Stations.refresh({
-    modesWanted: getModesWanted(),
+    modesWanted,
     center: [addrLat, addrLon],
     radiusMeters: lastRadiusMeters
   });
@@ -148,9 +154,9 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   const dep = normDept(depInput);
   await Store.loadDeps([dep]);
 
-  Stations.clear();
   clearSecteur();
   addrLat = null; addrLon = null; lastRadiusMeters = 0;
+  lastDep = dep;
 
   const top = Store.top10ByDept(dep, typesWanted, sectorFilter);
 
@@ -199,6 +205,9 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
     list.appendChild(sec);
   }
 
+  // les gares du département, filtrées sur les modes cochés
+  await Stations.ensure({ modesWanted: getModesWanted(), dep });
+
   const all = order.flatMap(t => top[t] || []).filter(x => x.lat && x.lon);
   if (anyMarker && all.length) fitToMarkers(map, all);
   else if (order.some(t => (top[t] || []).length)) showInfo("Top 10 listé (peu de coordonnées disponibles pour la carte).");
@@ -211,6 +220,7 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   const { lat, lon, label, address } = await resolvePoint(q);
   addrLat = lat; addrLon = lon;
+  lastDep = null;
   clearSecteur();
 
   // Charge les départements que le cercle recoupe — 3 km étant le rayon maximal

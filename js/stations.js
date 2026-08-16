@@ -414,7 +414,16 @@ export function makeStationsController({ map } = {}){
     }
   }
 
-  function rebuild({ modesWanted, center, radiusMeters } = {}){
+  /** '001'/'02A' -> '01'/'2A', pour comparer au champ dep des gares */
+  function normDep(d){
+    const t = String(d ?? "").trim().toUpperCase();
+    if (/^0?2[AB]$/.test(t)) return t.slice(-2);
+    if (/^\d{3}$/.test(t) && t.startsWith("0")) return t.slice(1).padStart(2,"0");
+    if (/^\d{1,2}$/.test(t)) return t.padStart(2,"0");
+    return t;
+  }
+
+  function rebuild({ modesWanted, center, radiusMeters, dep } = {}){
     for (const k of Object.keys(groups.markers)) groups.markers[k].clearLayers();
     for (const k of Object.keys(groups.labels))  groups.labels[k].clearLayers();
 
@@ -422,9 +431,13 @@ export function makeStationsController({ map } = {}){
     lastWanted = wanted;
 
     const filterByRadius = Array.isArray(center) && Number.isFinite(radiusMeters) && radiusMeters > 0;
+    // En recherche départementale il n'y a ni centre ni rayon : on retient les
+    // gares du département, sinon les cases à cocher restaient sans effet.
+    const depWanted = dep ? normDep(dep) : null;
 
     for (const row of all){
       if (!wanted.has(row.mode)) continue;
+      if (depWanted && normDep(row.dep) !== depWanted) continue;
       if (filterByRadius){
         const d = distanceMeters(center[0], center[1], row.lat, row.lon);
         if (d > radiusMeters) continue;
@@ -456,12 +469,12 @@ export function makeStationsController({ map } = {}){
   }
 
   return {
-    async ensure({ modesWanted, center, radiusMeters } = {}){
+    async ensure({ modesWanted, center, radiusMeters, dep } = {}){
       if (!all.length) all = await loadOnce();
-      rebuild({ modesWanted, center, radiusMeters });
+      rebuild({ modesWanted, center, radiusMeters, dep });
     },
-    refresh({ modesWanted, center, radiusMeters } = {}){
-      rebuild({ modesWanted, center, radiusMeters });
+    refresh({ modesWanted, center, radiusMeters, dep } = {}){
+      rebuild({ modesWanted, center, radiusMeters, dep });
     },
     clear(){
       for (const k of Object.keys(groups.markers)){
