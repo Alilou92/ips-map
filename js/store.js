@@ -2,7 +2,7 @@
 import { strip, distanceMeters } from "./util.js?v=3";
 
 /** Cache-bust pour les JSON statiques */
-const DATA_VERSION = "23";
+const DATA_VERSION = "26";
 
 /* ---------- utils ---------- */
 const toNum = (x) => (x === null || x === undefined || x === "" ? null : Number(x));
@@ -175,6 +175,7 @@ function normalizeIps(ipsRaw) {
 
 const Store = {
   ready: false,
+  _loading: null,
 
   establishments: [],
   ipsMap: new Map(),
@@ -182,7 +183,16 @@ const Store = {
   byCP: new Map(),
   gazetteer: [],
 
-  async load() {
+  /** Charge une seule fois, même si appelé en parallèle (focus + clic Chercher) */
+  load() {
+    if (this.ready) return Promise.resolve();
+    if (!this._loading) {
+      this._loading = this._load().catch(err => { this._loading = null; throw err; });
+    }
+    return this._loading;
+  },
+
+  async _load() {
     const [estRes, ipsRes, gazRes] = await Promise.all([
       fetch(`./data/establishments.min.json?v=${DATA_VERSION}`),
       fetch(`./data/ips.min.json?v=${DATA_VERSION}`),
@@ -238,13 +248,20 @@ const Store = {
     } catch {}
   },
 
-  /** Trouve une commune par nom (exact/contient) */
+  /** Trouve une commune par nom (exact -> commence par -> contient) */
   findCommune(query) {
-    const q = strip(String(query)).toUpperCase().trim().replace(/\s+/g, " ");
+    const norm = (s) => strip(s).replace(/[’']/g, " ").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+    const q = norm(query);
     if (!q) return null;
-    return this.gazetteer.find(c => strip(c.name).toUpperCase() === q)
-        || this.gazetteer.find(c => strip(c.name).toUpperCase().includes(q))
-        || null;
+
+    let exact = null, starts = null, contains = null;
+    for (const c of this.gazetteer) {
+      const n = norm(c.name);
+      if (n === q) { exact = c; break; }
+      if (!starts && n.startsWith(q)) starts = c;
+      else if (!contains && n.includes(q)) contains = c;
+    }
+    return exact || starts || contains || null;
   },
 
   /** Top 10 IPS par type sur un département */

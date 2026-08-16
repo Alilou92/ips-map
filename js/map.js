@@ -86,7 +86,9 @@ export function fitToMarkers(map, items) {
     .filter(p => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
   if (!coords.length) return;
   const b = L.latLngBounds(coords.map(([la, lo]) => L.latLng(la, lo)));
-  try { map.fitBounds(b.pad(0.15), { animate: true }); } catch {}
+  // animate:false — un invalidateSize() déclenché juste après annulait le zoom animé
+  // et la carte restait au zoom initial.
+  try { map.fitBounds(b.pad(0.15), { animate: false }); } catch {}
 }
 
 export default { initMap, drawAddressCircle, markerFor, fitToMarkers };

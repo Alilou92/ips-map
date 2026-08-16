@@ -1,20 +1,54 @@
 // js/app.js — recherche + filtres + stations IDFM/SNCF
 import Store from "./store.js?v=23";
-import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=3";
+import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=4";
 import { geocode } from "./geocode.js?v=2";
-import { renderList, setCount, showErr } from "./ui.js?v=2";
-import { makeStationsController } from "./stations.js?v=17";
+import { renderList, setCount, showErr, showInfo, clearErr, clearList } from "./ui.js?v=3";
+import { makeStationsController } from "./stations.js?v=19";
+import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";
 
 /* helpers */
-function clearErr(){ const el = document.getElementById('err'); if (el) el.textContent = ''; }
 const DEPT_RE = /^(?:0?[1-9]|[1-8]\d|9[0-5]|2A|2B|97[1-6])$/i;
-const looksLikeDept = (q) => DEPT_RE.test(String(q).trim());
 function normDept(q){
   let s = String(q).trim().toUpperCase();
   if (s === "2A" || s === "2B") return s;
   if (/^\d{1,2}$/.test(s)) return s.padStart(2,"0");
   if (/^97[1-6]$/.test(s)) return s;
   return s;
+}
+
+/** normalise un libellé : sans accents, minuscules, tirets/apostrophes -> espaces */
+function normLabel(s){
+  return String(s ?? "")
+    .normalize("NFKD").replace(/\p{Diacritic}/gu,"")
+    .toLowerCase()
+    .replace(/[’'\-_]+/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+}
+
+/**
+ * Renvoie le code département si la saisie en désigne un, sinon null.
+ * - "94", "2A", "971"                      -> code
+ * - "Val-de-Marne", "Seine Saint Denis"    -> code (noms non ambigus)
+ * - "département Vienne", "dep 86"         -> code (force le mode département)
+ * Les noms qui sont aussi des communes (Vienne, Loire, Mayenne…) ne basculent
+ * en mode département que s’ils sont préfixés par "département/dept/dep".
+ */
+function deptFromQuery(q){
+  const raw = String(q || "").trim();
+  if (!raw) return null;
+  if (DEPT_RE.test(raw)) return normDept(raw);
+
+  const forced = /^(?:departements?|dept|dep)\s+(.+)$/.exec(normLabel(raw));
+  const key = forced ? forced[1] : normLabel(raw);
+  if (!key) return null;
+
+  if (forced && DEPT_RE.test(key.toUpperCase())) return normDept(key);
+
+  const code = DEPT_BY_NAME[key];
+  if (!code) return null;
+  if (!forced && AMBIGUOUS_DEPT_NAMES.has(key)) return null; // "Vienne" = commune par défaut
+  return code;
 }
 function normalizeSectorFromSelect(raw){
   const s = String(raw||"").normalize("NFKD").replace(/\p{Diacritic}/gu,"").toLowerCase().trim();
@@ -28,23 +62,24 @@ function normalizeSectorFromSelect(raw){
 const { map, markersLayer } = initMap();
 const Stations = makeStationsController({ map });
 
-/* ───────── Adaptation mobile : hauteur dynamique de la carte ───────── */
+/* ───────── Redimensionnement : la hauteur vient du CSS, on resynchronise Leaflet ───────── */
 window._leafletMap = map;
-function resizeMapToViewport() {
-  const top = document.querySelector('.top');
-  const mapEl = document.getElementById('map');
-  if (!mapEl) return;
-  const topH = top ? top.offsetHeight : 0;
-  const h = Math.max(240, window.innerHeight - topH);
-  mapEl.style.height = h + 'px';
-  requestAnimationFrame(() => {
-    try { window._leafletMap && window._leafletMap.invalidateSize(); } catch {}
+let _resizeRaf = 0;
+function syncMapSize() {
+  if (_resizeRaf) cancelAnimationFrame(_resizeRaf);
+  _resizeRaf = requestAnimationFrame(() => {
+    _resizeRaf = 0;
+    try { map.invalidateSize({ animate: false }); } catch {}
   });
 }
-window.addEventListener('resize', resizeMapToViewport, { passive: true });
-window.addEventListener('orientationchange', resizeMapToViewport, { passive: true });
-window.addEventListener('DOMContentLoaded', resizeMapToViewport, { passive: true });
-resizeMapToViewport();
+window.addEventListener('resize', syncMapSize, { passive: true });
+window.addEventListener('orientationchange', syncMapSize, { passive: true });
+// la barre du haut peut passer sur 2 lignes (wrap) : on suit sa hauteur réelle
+if (typeof ResizeObserver !== "undefined") {
+  const topEl = document.querySelector('.top');
+  if (topEl) new ResizeObserver(syncMapSize).observe(topEl);
+}
+syncMapSize();
 
 /* ───────── Résolution adresse/ville/CP -> point ───────── */
 async function resolvePoint(q){
@@ -106,10 +141,10 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
 
   const top = Store.top10ByDept(dep, typesWanted, sectorFilter);
 
-  const count = document.getElementById('count');
   const list  = document.getElementById('list');
   list.innerHTML = "";
-  count.textContent = `Top 10 — Département ${dep} (${sectorFilter==="all"?"Tous secteurs":sectorFilter})`;
+  const depLabel = DEPT_NAME_BY_CODE[dep] ? `${dep} – ${DEPT_NAME_BY_CODE[dep]}` : dep;
+  setCount(`Top 10 — Département ${depLabel} (${sectorFilter==="all"?"Tous secteurs":sectorFilter})`);
 
   markersLayer.clearLayers();
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
@@ -153,7 +188,8 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
 
   const all = order.flatMap(t => top[t] || []).filter(x => x.lat && x.lon);
   if (anyMarker && all.length) fitToMarkers(map, all);
-  else showErr("Top 10 listé (peu de coordonnées disponibles pour la carte).");
+  else if (order.some(t => (top[t] || []).length)) showInfo("Top 10 listé (peu de coordonnées disponibles pour la carte).");
+  else showInfo(`Aucun établissement avec IPS publié pour le département ${depLabel}.`);
 }
 
 /* autour d’une adresse/ville/CP */
@@ -201,8 +237,10 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   if (!items.length){
     setCount("0 établissement trouvé");
-    showErr("Aucun établissement trouvé autour de cette zone. Essaie d’augmenter le rayon.");
+    clearList("Aucun résultat pour cette zone.");
+    showInfo(`Aucun établissement dans ${triedKm} km autour de « ${label} ». Essaie d’augmenter le rayon ou d’élargir les filtres.`);
     map.setView([lat, lon], triedKm >= 2 ? 13 : 15);
+    src.openPopup();
     return;
   }
 
@@ -219,11 +257,11 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   fitToMarkers(map, items.concat([{lat, lon}]));
   src.openPopup();
-
-  requestAnimationFrame(resizeMapToViewport);
 }
 
 /* contrôleur */
+let _searchToken = 0;   // ignore les résultats d’une recherche périmée
+
 async function runSearch(){
   clearErr();
   const q = document.getElementById('addr').value.trim();
@@ -233,39 +271,44 @@ async function runSearch(){
   const typesWanted = new Set(typesSel.length ? typesSel : ["ecole","college","lycee"]);
   if (!q){ showErr("Saisis une adresse, une ville ou un code département"); return; }
 
+  const token = ++_searchToken;
   const btn = document.getElementById('go');
   btn.disabled = true;
   setCount("Chargement…");
   try {
-    if (looksLikeDept(q)) {
-      await runDeptRankingLocal(q, sectorFilter, typesWanted);
+    const dep = deptFromQuery(q);
+    if (dep) {
+      await runDeptRankingLocal(dep, sectorFilter, typesWanted);
     } else {
       await runAround(q, radiusKm, sectorFilter, typesWanted);
     }
   } catch(e){
+    if (token !== _searchToken) return;   // une recherche plus récente a pris la main
     console.error(e);
+    setCount("—");
     showErr("Erreur : " + (e?.message || e));
   } finally {
-    btn.disabled = false;
-    requestAnimationFrame(resizeMapToViewport);
+    if (token === _searchToken) btn.disabled = false;
   }
+}
+
+/** relance la recherche seulement si une requête est déjà saisie */
+function rerunIfQuery(){
+  if (document.getElementById('addr').value.trim()) runSearch();
 }
 
 /* bind */
 document.getElementById('go').addEventListener('click', runSearch);
 document.getElementById('addr').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
-document.getElementById('secteur').addEventListener('change', runSearch);
-document.getElementById('radiusKm').addEventListener('change', runSearch);
-document.getElementById('types').addEventListener('change', runSearch);
+document.getElementById('secteur').addEventListener('change', rerunIfQuery);
+document.getElementById('radiusKm').addEventListener('change', rerunIfQuery);
+document.getElementById('types').addEventListener('change', rerunIfQuery);
 
 // (stations) écoute les cases à cocher
 for (const id of Object.values(MODE_IDS)){
   const el = document.getElementById(id);
   if (el){
-    el.addEventListener('change', () => {
-      refreshStations();
-      requestAnimationFrame(resizeMapToViewport);
-    });
+    el.addEventListener('change', refreshStations);
   }
 }
 

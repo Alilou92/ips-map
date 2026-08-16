@@ -1,7 +1,30 @@
 // js/ui.js
-export function showErr(msg){ const el=document.getElementById('err'); el.textContent=msg; el.classList.add('show'); }
-export function clearErr(){ const el=document.getElementById('err'); el.textContent=""; el.classList.remove('show'); }
-export function setCount(txt){ document.getElementById('count').textContent = txt; }
+export function showErr(msg){
+  const el=document.getElementById('err'); if(!el) return;
+  el.textContent=msg; el.classList.add('show'); el.classList.remove('info');
+}
+export function showInfo(msg){
+  const el=document.getElementById('err'); if(!el) return;
+  el.textContent=msg; el.classList.add('show','info');
+}
+export function clearErr(){
+  const el=document.getElementById('err'); if(!el) return;
+  el.textContent=""; el.classList.remove('show','info');
+}
+export function setCount(txt){ const el=document.getElementById('count'); if(el) el.textContent = txt; }
+
+/** Vide la liste des résultats (et affiche un message optionnel) */
+export function clearList(msg){
+  const list = document.getElementById('list'); if(!list) return;
+  list.innerHTML = "";
+  if (msg){
+    const d = document.createElement('div');
+    d.className = "small";
+    d.style.margin = "6px 0";
+    d.textContent = msg;
+    list.appendChild(d);
+  }
+}
 
 export function renderList({ items, ipsMap, markersByUai, map }){
   const list = document.getElementById('list');
