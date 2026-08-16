@@ -8,8 +8,7 @@
 #   data/gazetteer.min.json       -> [{name,cps[],lat,lon,dep?}]
 #   data/stations.min.json        -> [{name,type,mode,line?,lat,lon}]
 
-import json, time, unicodedata, urllib.request, gzip, os, re
-import re
+import json, time, unicodedata, urllib.request, gzip, os, re, csv, io
 BASE_EXPLORE = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/"
 DS_GEO = "fr-en-adresse-et-geolocalisation-etablissements-premier-et-second-degre"
 # n'exporter que les établissements en service (etat_etablissement_libe == "OUVERT")
@@ -356,6 +355,116 @@ def build_exams():
     with open("data/exams.min.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print(f"OK: data/exams.min.json ({len(etab)} établissements)")
+
+DS_CARTE_SCOLAIRE = "fr-en-carte-scolaire-colleges-publics"
+
+def norm_dep(d):
+    """'001' -> '01', '054' -> '54', '973' -> '973', '2A' -> '2A'"""
+    s = str(d or "").strip().upper()
+    if not s:
+        return ""
+    if s in ("2A", "2B"):
+        return s
+    if re.fullmatch(r"\d{3}", s) and s.startswith("0"):
+        s = s[1:]
+    if re.fullmatch(r"\d{1,2}", s):
+        return s.zfill(2)
+    return s
+
+def norm_voie(s):
+    """Clé de voie commune au build et au navigateur.
+
+    Le jeu MENJ écrit déjà en majuscules sans accents et remplace les
+    apostrophes par des espaces ("PASSAGE DE L ECOLE"). On applique le même
+    traitement à ce que renvoie la BAN pour que les deux se rejoignent.
+    """
+    s = unicodedata.normalize("NFKD", str(s or ""))
+    s = "".join(c for c in s if not unicodedata.combining(c)).upper()
+    s = re.sub(r"[^A-Z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+def build_secteurs():
+    """data/secteur/<dep>.min.json — collège de secteur par adresse.
+
+    Un fichier par département, chargé à la demande : les 520 000 lignes du
+    jeu national ne peuvent pas partir dans le navigateur d'un coup.
+
+    Deux cas dans la source :
+      • secteur_unique = O  -> toute la commune dépend d'un seul collège
+      • sinon               -> tronçons de voie (numéros début/fin + parité)
+
+    Les UAI sont mutualisés dans un tableau et référencés par index : un
+    département compte des dizaines de milliers de tronçons pour quelques
+    dizaines de collèges.
+    """
+    print("Télécharge la carte scolaire des collèges publics…")
+    url = f"{BASE_EXPLORE}{DS_CARTE_SCOLAIRE}/exports/csv?delimiter=%3B"
+    raw = _fetch_bytes(url).decode("utf-8-sig", "replace")
+
+    deps = {}
+    lignes = 0
+    for r in csv.DictReader(io.StringIO(raw), delimiter=";"):
+        uai = (r.get("code_rne") or "").strip().upper()
+        insee = (r.get("code_insee") or "").strip()
+        if not uai or not insee:
+            continue
+        dep = norm_dep(r.get("code_departement"))
+        if not dep:
+            continue
+        lignes += 1
+
+        d = deps.setdefault(dep, {"dep": dep, "uai": [], "_idx": {}, "uniq": {}, "voies": {}})
+        if uai not in d["_idx"]:
+            d["_idx"][uai] = len(d["uai"])
+            d["uai"].append(uai)
+        iu = d["_idx"][uai]
+
+        if (r.get("secteur_unique") or "").strip().upper() == "O":
+            d["uniq"][insee] = iu
+            continue
+
+        voie = norm_voie(r.get("type_et_libelle"))
+        if not voie:
+            continue
+
+        def num(x):
+            x = (x or "").strip()
+            try:
+                return int(float(x))
+            except (TypeError, ValueError):
+                return None
+
+        deb, fin = num(r.get("n_de_voie_debut")), num(r.get("n_de_voie_fin"))
+        par = (r.get("parite") or "").strip().upper()
+        if par not in ("P", "I"):
+            par = "PI"          # y compris les ~30 lignes où le champ est corrompu
+
+        d["voies"].setdefault(insee, {}).setdefault(voie, []).append([deb, fin, par, iu])
+
+    out_dir = os.path.join("data", "secteur")
+    os.makedirs(out_dir, exist_ok=True)
+    for f in os.listdir(out_dir):
+        if f.endswith(".min.json"):
+            os.remove(os.path.join(out_dir, f))
+
+    total = 0
+    index = {}
+    for dep, d in sorted(deps.items()):
+        d.pop("_idx", None)
+        path = os.path.join(out_dir, f"{dep}.min.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, separators=(",", ":"))
+        ko = os.path.getsize(path) // 1024
+        total += os.path.getsize(path)
+        index[dep] = {"communes": len(d["voies"]) + len(d["uniq"]), "ko": ko}
+
+    with open(os.path.join(out_dir, "index.json"), "w", encoding="utf-8") as f:
+        json.dump({"deps": sorted(deps), "detail": index}, f, ensure_ascii=False, separators=(",", ":"))
+
+    gros = sorted(index.items(), key=lambda kv: -kv[1]["ko"])[:3]
+    print(f"OK: data/secteur/ — {len(deps)} départements, {lignes} tronçons, "
+          f"{total // 1024} Ko au total (plus gros : "
+          + ", ".join(f"{d} {v['ko']} Ko" for d, v in gros) + ")")
 
 def build_gazetteer():
     print("Télécharge gazetteer communes…")

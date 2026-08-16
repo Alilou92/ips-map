@@ -15,6 +15,62 @@ export function clearErr(){
 }
 export function setCount(txt){ const el=document.getElementById('count'); if(el) el.textContent = txt; }
 
+/**
+ * Bloc « collège de secteur » au-dessus des résultats.
+ * res  = retour de collegeDeSecteur(), etab = l'établissement correspondant.
+ */
+export function renderSecteur({ res, etab, ips, exams, examsMeta, label, onClick, choix }){
+  const box = document.getElementById('secteurBox');
+  if (!box) return;
+  box.innerHTML = "";
+  if (!res) return;
+
+  const el = document.createElement('div');
+  el.className = "secteur";
+
+  if (res.indisponible){
+    el.innerHTML = `<div class="secteur-h">Collège de secteur</div>
+      <div class="secteur-sub">Carte scolaire non publiée pour le département ${res.dep}.</div>`;
+    box.appendChild(el); return;
+  }
+  if (res.ambigu){
+    const noms = (choix || []).filter(Boolean);
+    const raison = res.motif === "voie-partagee"
+      ? "Cette adresse relève de plusieurs collèges (secteur partagé)."
+      : "Plusieurs collèges desservent cette voie — précise le numéro dans l’adresse.";
+    el.innerHTML = `<div class="secteur-h">Collège de secteur</div>
+      <div class="secteur-sub">${raison}</div>
+      ${noms.length ? `<div class="secteur-name" style="margin-top:4px">${
+        noms.map(e => e.name || e.uai).join("<br>")}</div>` : ""}`;
+    box.appendChild(el); return;
+  }
+  if (!etab) return;
+
+  const ex = examSummary(exams, examsMeta);
+  const approx = res.exact ? "" :
+    `<div class="secteur-sub">Secteur déduit ${res.motif === "commune" || res.motif === "commune-unique"
+      ? "de la commune (un seul collège de secteur)" : "de la voie entière"} — sans numéro de rue.</div>`;
+
+  el.innerHTML = `
+    <div class="secteur-h">Collège de secteur</div>
+    <div class="secteur-name">${etab.name || "Collège"}</div>
+    <div class="secteur-sub">${etab.commune || ""}${label ? ` — pour ${label}` : ""}</div>
+    <div class="secteur-sub">IPS : ${Number.isFinite(Number(ips)) ? Number(ips).toFixed(1) : "—"}${
+      ex ? ` • ${ex.text}${ex.va!=null?` <span class="va ${ex.vaClass}" title="${ex.title}">VA ${ex.va}</span>`:""}` : ""}</div>
+    ${approx}`;
+
+  if (typeof onClick === "function"){
+    el.style.cursor = "pointer";
+    el.addEventListener('click', onClick);
+  }
+  box.appendChild(el);
+}
+
+export function clearSecteur(){
+  const box = document.getElementById('secteurBox');
+  if (box) box.innerHTML = "";
+}
+
 /** Vide la liste des résultats (et affiche un message optionnel) */
 export function clearList(msg){
   const list = document.getElementById('list'); if(!list) return;

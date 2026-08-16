@@ -1,6 +1,21 @@
 // js/geocode.js — géocodage robuste (BAN -> GéoAPI -> Nominatim), avec support code postal
 // Retourne { lat, lon, label, provider }
 
+/** Adresse structurée : ce qu'il faut pour retrouver le collège de secteur */
+function addressFromBAN(p) {
+  if (!p) return null;
+  const ctx = String(p.context || "").split(",")[0].trim();
+  return {
+    street: p.street || (p.type === "street" ? p.name : null) || null,
+    housenumber: p.housenumber != null ? String(p.housenumber) : null,
+    citycode: p.citycode || null,      // code INSEE, arrondissement compris (75101…)
+    postcode: p.postcode || null,
+    city: p.city || null,
+    dep: ctx || null,
+    type: p.type || null,
+  };
+}
+
 async function tryBAN(query) {
   try {
     const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1&autocomplete=1&type=street&type=locality&type=municipality&type=postcode&type=housenumber`;
@@ -13,7 +28,7 @@ async function tryBAN(query) {
       const [lon, lat] = coords;
       if (Number.isFinite(lat) && Number.isFinite(lon)) {
         const label = f.properties?.label || query;
-        return { lat, lon, label, provider: "BAN" };
+        return { lat, lon, label, provider: "BAN", address: addressFromBAN(f.properties) };
       }
     }
     return null;

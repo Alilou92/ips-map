@@ -1,8 +1,9 @@
 // js/app.js — recherche + filtres + stations IDFM/SNCF
 import Store from "./store.js?v=24";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=5";
-import { geocode } from "./geocode.js?v=2";
-import { renderList, setCount, showErr, showInfo, clearErr, clearList } from "./ui.js?v=4";
+import { geocode } from "./geocode.js?v=3";
+import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur } from "./ui.js?v=6";
+import { collegeDeSecteur } from "./secteur.js?v=2";
 import { makeStationsController } from "./stations.js?v=21";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";
 
@@ -137,6 +138,7 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   if (!Store.ready) await Store.load();
 
   Stations.clear();
+  clearSecteur();
   addrLat = null; addrLon = null; lastRadiusMeters = 0;
 
   const top = Store.top10ByDept(dep, typesWanted, sectorFilter);
@@ -196,8 +198,9 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
 async function runAround(q, radiusKm, sectorFilter, typesWanted){
   if (!Store.ready) await Store.load();
 
-  const { lat, lon, label } = await resolvePoint(q);
+  const { lat, lon, label, address } = await resolvePoint(q);
   addrLat = lat; addrLon = lon;
+  clearSecteur();
 
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
   addrCircle = drawAddressCircle(map, lat, lon, radiusKm * 1000);
@@ -258,6 +261,29 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   fitToMarkers(map, items.concat([{lat, lon}]));
   src.openPopup();
+
+  await showSecteur(address, label);
+}
+
+/** Collège de secteur : seule une vraie adresse permet de le déterminer */
+async function showSecteur(address, label){
+  if (!address || !address.citycode) return;
+  let res = null;
+  try { res = await collegeDeSecteur(address); }
+  catch (e) { console.warn("[Secteur] indisponible :", e.message); return; }
+  if (!res) return;
+
+  const etab = res.uai ? Store.establishments.find(e => e.uai === res.uai) : null;
+  const choix = Array.isArray(res.choix)
+    ? res.choix.map(u => Store.establishments.find(e => e.uai === u) || { uai: u })
+    : null;
+  renderSecteur({
+    res, etab, label, choix,
+    ips: etab ? Store.ipsMap.get(etab.uai) : null,
+    exams: etab ? Store.examsFor(etab.uai) : null,
+    examsMeta: Store.examsMeta,
+    onClick: etab ? () => map.setView([etab.lat, etab.lon], 16) : null
+  });
 }
 
 /* contrôleur */

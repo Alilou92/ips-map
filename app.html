@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml"
         href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%230f1320"/><text x="50%" y="52%" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="28" fill="%234ea1ff">IPS</text></svg>'>
 
-  <link rel="stylesheet" href="./assets/style.css?v=47" />
+  <link rel="stylesheet" href="./assets/style.css?v=48" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
@@ -80,6 +80,7 @@
         <div class="title">Résultats</div>
         <div class="small" id="count">—</div>
       </div>
+      <div id="secteurBox"></div>
       <div class="list" id="list"></div>
 
       <div class="note">
@@ -89,6 +90,9 @@
         <div>• <strong>VA</strong> = valeur ajoutée : écart au résultat <em>attendu</em> vu le profil
           social des élèves. Vert = l’établissement fait mieux que prévu. Brevet et bac
           uniquement — rien n’est publié pour le primaire.</div>
+        <div>• Tape une <em>adresse complète</em> (avec le numéro) pour connaître le
+          <strong>collège de secteur</strong>. Collèges publics uniquement ; carte scolaire
+          non publiée en Charente-Maritime, Côtes-d’Armor et Corse.</div>
       </div>
 
       <div class="footer">© OSM/Leaflet • Données MENJ Opendatasoft.</div>
@@ -107,8 +111,8 @@
 
   <!-- synchronisé avec stations.js / app.js -->
 
-<script>window.APP_VERSION = 'v48';</script>
-<script type="module" src="./js/app.js?v=v48"></script>
+<script>window.APP_VERSION = 'v52';</script>
+<script type="module" src="./js/app.js?v=v52"></script>
 
 
 </body>
