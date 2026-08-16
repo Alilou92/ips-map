@@ -51,6 +51,12 @@ function deptFromQuery(q){
   if (!forced && AMBIGUOUS_DEPT_NAMES.has(key)) return null; // "Vienne" = commune par défaut
   return code;
 }
+/** Rayons proposés, en km. Le plus grand sert aussi à décider quels
+    départements précharger : une recherche de 5 km peut déborder sur deux
+    départements voisins, il ne faut pas les manquer. */
+const RAYONS_KM = [1, 2, 3, 5];
+const RAYON_MAX_M = Math.max(...RAYONS_KM) * 1000;
+
 function normalizeSectorFromSelect(raw){
   const s = String(raw||"").normalize("NFKD").replace(/\p{Diacritic}/gu,"").toLowerCase().trim();
   if (!s || raw === "all") return "all";
@@ -209,7 +215,7 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   // Charge les départements que le cercle recoupe — 3 km étant le rayon maximal
   // que la recherche peut tenter, on couvre d'un coup les élargissements.
-  await Store.loadDeps(Store.depsForCircle(lat, lon, 3000));
+  await Store.loadDeps(Store.depsForCircle(lat, lon, RAYON_MAX_M));
 
   if (addrCircle) { map.removeLayer(addrCircle); addrCircle = null; }
   addrCircle = drawAddressCircle(map, lat, lon, radiusKm * 1000);
@@ -218,19 +224,14 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
 
   let items = Store.around(lat, lon, radiusKm * 1000, sectorFilter, typesWanted);
 
-  // élargit si vide
+  // élargit tant que rien ne sort, jusqu'au plus grand rayon proposé
   let triedKm = radiusKm;
-  if (!items.length && radiusKm < 2){
-    triedKm = 2;
+  for (const km of RAYONS_KM){
+    if (items.length || km <= radiusKm) continue;
+    triedKm = km;
     map.removeLayer(addrCircle);
-    addrCircle = drawAddressCircle(map, lat, lon, 2000);
-    items = Store.around(lat, lon, 2000, sectorFilter, typesWanted);
-  }
-  if (!items.length && radiusKm < 3){
-    triedKm = 3;
-    map.removeLayer(addrCircle);
-    addrCircle = drawAddressCircle(map, lat, lon, 3000);
-    items = Store.around(lat, lon, 3000, sectorFilter, typesWanted);
+    addrCircle = drawAddressCircle(map, lat, lon, km * 1000);
+    items = Store.around(lat, lon, km * 1000, sectorFilter, typesWanted);
   }
 
   // mémorise le rayon pour les stations
@@ -251,7 +252,7 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
     setCount("0 établissement trouvé");
     clearList("Aucun résultat pour cette zone.");
     showInfo(`Aucun établissement dans ${triedKm} km autour de « ${label} ». Essaie d’augmenter le rayon ou d’élargir les filtres.`);
-    map.setView([lat, lon], triedKm >= 2 ? 13 : 15);
+    map.setView([lat, lon], triedKm >= 5 ? 12 : triedKm >= 2 ? 13 : 15);
     src.openPopup();
     return;
   }
