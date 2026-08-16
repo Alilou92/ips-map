@@ -4,7 +4,7 @@
 import { distanceMeters } from "./util.js?v=3";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "22";
+const DATA_VERSION = "23";
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
@@ -12,9 +12,13 @@ const MODE_LABEL = {
   rer: "RER",
   transilien: "Transilien",
   ter: "TER",
-  tgv: "TGV",
+  // le GTFS national ne sépare pas TGV et Intercités : les deux arrivent ici
+  tgv: "TGV / Intercités",
   tram: "Tram",
 };
+
+// libellé court des pastilles, distinct du libellé descriptif ci-dessus
+const BADGE_MODE = { ter: "TER", tgv: "TGV" };
 
 /* Palette officielle IDFM (route_color du GTFS). Sert uniquement de secours :
    la couleur portée par la donnée prime — cf. colorFor(). */
@@ -172,7 +176,7 @@ function badgeText(mode, line){
   if (m === "rer")        return l ? `RER ${l}` : "RER";
   if (m === "tram")       return l || "T";
   if (m === "transilien") return l || "TN";
-  return (MODE_LABEL[m] || m || "?").toUpperCase();
+  return BADGE_MODE[m] || (MODE_LABEL[m] || m || "?").toUpperCase();
 }
 
 function iconFor(row) {

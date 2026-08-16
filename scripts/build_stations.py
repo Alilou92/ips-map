@@ -395,6 +395,72 @@ def build_station_entries_from_gtfs(gtfs_bytes: bytes) -> List[Dict[str, object]
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+# GTFS national SNCF (TER, Intercités, TGV). Le flux IDFM s'arrête aux frontières
+# de l'Île-de-France : sans celui-ci, Le Mans, Lyon ou Bordeaux n'ont aucune gare.
+SNCF_GTFS_URL = os.environ.get(
+    "SNCF_GTFS_URL",
+    "https://eu.ftp.opendatasoft.com/sncf/plandata/Export_OpenData_SNCF_GTFS_NewTripId.zip"
+)
+
+# Les agences du flux SNCF sont toutes « SNCF Voyageurs » : le service se lit sur
+# le code de ligne. Les dessertes grande ligne portent un numéro à 3 chiffres
+# (401D Paris-Rennes, 631B Paris-Marseille), les TER une lettre suivie d'un
+# nombre (P5, K39, C30).
+_GRANDE_LIGNE_RE = re.compile(r"^\d{3}[A-Z]?$", re.I)
+
+def sncf_mode(short_name: str, long_name: str) -> Optional[str]:
+    s = (short_name or "").strip().upper()
+    l = (long_name or "").strip().upper()
+    if "TGV" in l or "TGV" in s:
+        return "tgv"
+    if _GRANDE_LIGNE_RE.match(s):
+        return "tgv"          # grandes lignes : TGV et Intercités confondus
+    return "ter"
+
+def build_sncf_entries(gtfs_bytes: bytes) -> List[Dict[str, object]]:
+    """Gares SNCF nationales, une entrée par (gare, mode).
+
+    Volontairement pas une entrée par ligne : Le Mans est desservi par 37
+    routes, ce qui donnerait 37 marqueurs superposés sans rien apprendre.
+    """
+    zf = zipfile.ZipFile(io.BytesIO(gtfs_bytes))
+    routes = {r["route_id"]: r for r in read_csv_from_zip(zf, ["routes.txt"]) or []}
+    stops = {s["stop_id"]: s for s in read_csv_from_zip(zf, ["stops.txt"]) or []}
+    trips = {t["trip_id"]: t for t in read_csv_from_zip(zf, ["trips.txt"]) or []}
+
+    # mode(s) desservant chaque zone d'arrêt
+    modes_par_gare: Dict[str, Set[str]] = defaultdict(set)
+    for st in read_csv_from_zip(zf, ["stop_times.txt"]) or []:
+        t = trips.get(st.get("trip_id"))
+        if not t:
+            continue
+        r = routes.get(t.get("route_id"))
+        if not r or str(r.get("route_type", "")).strip() != "2":   # 2 = ferroviaire
+            continue
+        sid = st.get("stop_id")
+        s = stops.get(sid)
+        if not s:
+            continue
+        gare = s.get("parent_station") or sid                       # remonte à la zone
+        m = sncf_mode(r.get("route_short_name"), r.get("route_long_name"))
+        if m:
+            modes_par_gare[gare].add(m)
+
+    out = []
+    for gare, modes in modes_par_gare.items():
+        s = stops.get(gare)
+        if not s:
+            continue
+        try:
+            lat, lon = float(s["stop_lat"]), float(s["stop_lon"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        nom = norm_name(s.get("stop_name"))
+        for m in sorted(modes):
+            out.append({"name": nom, "mode": m, "line": None, "lat": lat, "lon": lon,
+                        "colorHex": DEFAULT_BY_MODE[m]})
+    return out
+
 BAN_REVERSE_CSV = "https://api-adresse.data.gouv.fr/reverse/csv/"
 
 def add_communes(entries: List[Dict[str, object]]) -> int:
@@ -457,6 +523,34 @@ def add_communes(entries: List[Dict[str, object]]) -> int:
         if ville or cp:
             loc[key] = {"commune": ville, "cp": cp, "dep": dep}
 
+    # Rattrapage : la BAN cherche une *adresse* proche et ne répond rien pour une
+    # gare posée au milieu des voies (Le Mans, Aix-en-Provence TGV…). L'API géo
+    # répond, elle, par la commune qui contient le point.
+    manquants = [p for p in points if p not in loc]
+    if manquants:
+        print(f"  {len(manquants)} points sans adresse proche, reprise via geo.api.gouv.fr…")
+        rattrapes = 0
+        for lat, lon in manquants:
+            try:
+                url = (f"https://geo.api.gouv.fr/communes?lat={lat}&lon={lon}"
+                       f"&fields=nom,codesPostaux,codeDepartement&format=json")
+                req = Request(url, headers={"User-Agent": "ips-map-builder/1.0"})
+                with urlopen(req, timeout=30) as r:
+                    arr = json.loads(r.read().decode("utf-8"))
+            except Exception:
+                continue
+            if not arr:
+                continue          # hors de France : gares allemandes, espagnoles…
+            c = arr[0]
+            cps = c.get("codesPostaux") or []
+            loc[(lat, lon)] = {
+                "commune": c.get("nom") or "",
+                "cp": cps[0] if cps else "",
+                "dep": c.get("codeDepartement") or "",
+            }
+            rattrapes += 1
+        print(f"  -> {rattrapes} rattrapées")
+
     n = 0
     for e in entries:
         v = loc.get((round(float(e["lat"]), 6), round(float(e["lon"]), 6)))
@@ -482,12 +576,31 @@ def main() -> int:
         print(f"Téléchargement impossible: {e}")
         return 3
 
-    print("Parsing GTFS…")
+    print("Parsing GTFS IDFM…")
     try:
         entries = build_station_entries_from_gtfs(gtfs_bytes)
     except Exception as e:
         print("Erreur pendant le parsing GTFS:", e)
         return 4
+    print(f"  -> {len(entries)} entrées Île-de-France")
+
+    # Couverture nationale : le flux IDFM ignore tout ce qui sort de la région.
+    # Les TER franciliens qu'il contenait sont remplacés par ceux du flux SNCF,
+    # plus complets et cohérents avec le reste du pays.
+    try:
+        print("Téléchargement GTFS national SNCF…")
+        sncf = build_sncf_entries(download_bytes(SNCF_GTFS_URL))
+        entries = [e for e in entries if e.get("mode") not in ("ter", "tgv")]
+        vus = {(e["mode"], round(e["lat"], 4), round(e["lon"], 4)) for e in entries}
+        ajoutees = 0
+        for e in sncf:
+            k = (e["mode"], round(e["lat"], 4), round(e["lon"], 4))
+            if k in vus:
+                continue
+            vus.add(k); entries.append(e); ajoutees += 1
+        print(f"  -> {ajoutees} gares SNCF ajoutées (TER + grandes lignes)")
+    except Exception as e:
+        print(f"  (SNCF) échec, couverture limitée à l'Île-de-France : {e}")
 
     add_communes(entries)
 
