@@ -22,6 +22,7 @@ import sys
 import json
 import zipfile
 import datetime
+import math
 from collections import defaultdict
 from typing import Dict, Set, Tuple, List, Optional
 from urllib.request import Request, urlopen
@@ -566,6 +567,66 @@ def add_communes(entries: List[Dict[str, object]]) -> int:
     print(f"  -> {n}/{len(entries)} stations localisées")
     return n
 
+def norm_dep_stations(d):
+    t = str(d or "").strip().upper()
+    if re.fullmatch(r"0?2[AB]", t): return t[-2:]
+    if re.fullmatch(r"\d{3}", t) and t.startswith("0"): t = t[1:]
+    if re.fullmatch(r"\d{1,2}", t): return t.zfill(2)
+    return t
+
+def ecrire_par_departement(entries, data_dir):
+    """data/stations/<dep>.min.json — une gare ne concerne qu'un département.
+
+    Le fichier national fait 654 Ko décompressés : le charger en entier pour
+    afficher deux gares au Mans était le dernier endroit où l'app téléchargeait
+    la France entière à chaque recherche.
+
+    Les gares étrangères (Bâle, Bettembourg…) n'ont pas de département : on les
+    rattache à celui de la gare française la plus proche, dans un rayon de
+    50 km, pour qu'elles restent visibles près des frontières.
+    """
+    connues = [e for e in entries if e.get("dep")]
+    orphelines = [e for e in entries if not e.get("dep")]
+
+    rattachees = 0
+    for o in orphelines:
+        best, bestd = None, 50.0
+        for c in connues:
+            dy = (o["lat"] - c["lat"]) * 111.0
+            dx = (o["lon"] - c["lon"]) * 111.0 * math.cos(math.radians(o["lat"]))
+            d = math.hypot(dx, dy)
+            if d < bestd:
+                best, bestd = c, d
+        if best:
+            o["dep"] = best["dep"]
+            rattachees += 1
+
+    par_dep = {}
+    for e in entries:
+        d = norm_dep_stations(e.get("dep"))
+        if d:
+            par_dep.setdefault(d, []).append(e)
+
+    out_dir = os.path.join(data_dir, "stations")
+    os.makedirs(out_dir, exist_ok=True)
+    for f in os.listdir(out_dir):
+        if f.endswith(".json"):
+            os.remove(os.path.join(out_dir, f))
+
+    total = 0
+    for dep, lst in sorted(par_dep.items()):
+        path = os.path.join(out_dir, f"{dep}.min.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(lst, f, ensure_ascii=False, separators=(",", ":"))
+        total += os.path.getsize(path)
+
+    with open(os.path.join(out_dir, "index.json"), "w", encoding="utf-8") as f:
+        json.dump({"deps": sorted(par_dep)}, f, ensure_ascii=False, separators=(",", ":"))
+
+    hors = len(entries) - sum(len(v) for v in par_dep.values())
+    print(f"OK → {out_dir}/ : {len(par_dep)} départements, {total // 1024} Ko au total, "
+          f"{rattachees} gares frontalières rattachées, {hors} hors périmètre")
+
 def main() -> int:
     print("Téléchargement GTFS IDFM…")
     url = IDFM_GTFS_URL or discover_latest_idfm_zip_url_via_datagouv(DATAGOUV_DATASET_SLUG)
@@ -622,6 +683,7 @@ def main() -> int:
         json.dump(entries, f, ensure_ascii=False, separators=(",", ":"))
 
     print(f"OK → {out_path} ({len(entries)} enregistrements)")
+    ecrire_par_departement(entries, os.path.dirname(out_path))
     print("Astuce: recharge la page avec ?bust=… et aligne DATA_VERSION dans js/stations.js")
     return 0
 

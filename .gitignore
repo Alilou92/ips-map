@@ -2,6 +2,7 @@
 data/establishments.min.json
 data/ips.min.json
 data/exams.min.json
+data/stations.min.json
 
 __pycache__/
 .claude/

@@ -4,7 +4,7 @@ import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=
 import { geocode } from "./geocode.js?v=5";
 import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur, renderPrix, clearPrix } from "./ui.js?v=13";
 import { collegeDeSecteur } from "./secteur.js?v=2";
-import { makeStationsController } from "./stations.js?v=24";
+import { makeStationsController } from "./stations.js?v=25";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";
 
 /* helpers */
@@ -206,7 +206,7 @@ async function runDeptRankingLocal(depInput, sectorFilter, typesWanted) {
   }
 
   // les gares du département, filtrées sur les modes cochés
-  await Stations.ensure({ modesWanted: getModesWanted(), dep });
+  await Stations.ensure({ modesWanted: getModesWanted(), dep, deps: [dep] });
 
   const all = order.flatMap(t => top[t] || []).filter(x => x.lat && x.lon);
   if (anyMarker && all.length) fitToMarkers(map, all);
@@ -255,7 +255,8 @@ async function runAround(q, radiusKm, sectorFilter, typesWanted){
   await Stations.ensure({
     modesWanted: getModesWanted(),
     center: [lat, lon],
-    radiusMeters: lastRadiusMeters
+    radiusMeters: lastRadiusMeters,
+    deps: Store.depsForCircle(lat, lon, RAYON_MAX_M)
   });
 
   if (!items.length){

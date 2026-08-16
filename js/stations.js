@@ -4,7 +4,7 @@
 import { distanceMeters } from "./util.js?v=3";
 
 // Bump si tu régénères data/stations.min.json
-const DATA_VERSION = "24";
+const DATA_VERSION = "25";
 
 /* ───────── Libellés + couleurs ───────── */
 const MODE_LABEL = {
@@ -281,30 +281,46 @@ function extractLine(row, mode, rawLine, nameU){
   return null;
 }
 
-/* ───────── chargement ───────── */
-let _rowsCache = null;
+/* ───────── chargement à la demande, département par département ───────── */
+// Le fichier national fait 654 Ko décompressés : le charger en entier pour
+// afficher deux gares au Mans revenait à télécharger la France à chaque
+// recherche. On ne prend que les départements que la zone recoupe.
+const _parDep = new Map();     // dep -> Promise<rows>
+let _rows = [];                // union des départements déjà chargés
+const _depsCharges = new Set();
 
-async function loadOnce(){
-  if (_rowsCache) return _rowsCache;
+function _normDepFichier(d){
+  const t = String(d ?? "").trim().toUpperCase();
+  if (/^0?2[AB]$/.test(t)) return t.slice(-2);
+  if (/^\d{3}$/.test(t) && t.startsWith("0")) return t.slice(1).padStart(2,"0");
+  if (/^\d{1,2}$/.test(t)) return t.padStart(2,"0");
+  return t;
+}
 
+async function chargerDeps(deps){
   const v = typeof window !== "undefined" ? (window.APP_VERSION || "") : "";
-  const urls = [
-    `./data/stations.min.json?v=${DATA_VERSION}-${v}`,
-    `./data/stations.min.json?v=${DATA_VERSION}`,
-    `./data/stations.min.json`
-  ];
+  const voulus = [...new Set((deps || []).map(_normDepFichier).filter(Boolean))]
+    .filter(d => !_depsCharges.has(d));
+  if (!voulus.length) return _rows;
 
-  let rawRows = [];
-  for (const url of urls){
-    try{
-      const res = await fetch(url, { cache: "no-cache" });
-      if (!res.ok) continue;
-      const json = await res.json();
-      if (Array.isArray(json)) rawRows = json;
-      else if (json && Array.isArray(json.features)) rawRows = json.features; // GeoJSON
-      if (rawRows.length){ console.debug(`[Stations] chargées: ${rawRows.length} via ${url}`); break; }
-    }catch{}
-  }
+  await Promise.all(voulus.map(dep => {
+    if (!_parDep.has(dep)){
+      _parDep.set(dep, fetch(`./data/stations/${dep}.min.json?v=${DATA_VERSION}-${v}`)
+        .then(r => r.ok ? r.json() : [])
+        .then(json => normaliser(Array.isArray(json) ? json : []))
+        .catch(() => []));
+    }
+    return _parDep.get(dep).then(rows => {
+      if (_depsCharges.has(dep)) return;
+      _depsCharges.add(dep);
+      _rows = _rows.concat(rows);
+      console.debug(`[Stations] département ${dep} : ${rows.length} gares`);
+    });
+  }));
+  return _rows;
+}
+
+function normaliser(rawRows){
 
   const out = [];
   for (const r0 of rawRows){
@@ -370,9 +386,7 @@ async function loadOnce(){
                cp: cpRaw ? String(cpRaw) : null, dep: null });
   }
 
-  _rowsCache = out;
-  console.debug(`[Stations] prêtes: ${out.length}`);
-  return _rowsCache;
+  return out;
 }
 
 /* ───────── contrôleur ───────── */
@@ -469,8 +483,10 @@ export function makeStationsController({ map } = {}){
   }
 
   return {
-    async ensure({ modesWanted, center, radiusMeters, dep } = {}){
-      if (!all.length) all = await loadOnce();
+    /** deps : départements que la zone recoupe, calculés par le Store */
+    async ensure({ modesWanted, center, radiusMeters, dep, deps } = {}){
+      const voulus = deps && deps.length ? deps : (dep ? [dep] : []);
+      all = await chargerDeps(voulus);
       rebuild({ modesWanted, center, radiusMeters, dep });
     },
     refresh({ modesWanted, center, radiusMeters, dep } = {}){
