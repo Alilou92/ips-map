@@ -10,7 +10,7 @@
 //     dans les grandes villes — Paris, Lyon et Marseille sont au moins
 //     découpés par arrondissement, puisque ce sont des communes INSEE.
 
-import { trimestreTableHtml } from "./trimestre.js?v=1";
+import { trimestreDetailHtml } from "./trimestre.js?v=2";
 
 const esc = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -104,9 +104,9 @@ export function prixHtml(prix, meta = {}, commune = "", dep = null, precisionReq
   }).join("");
 
   const an = rows[0].annee ? ` ${rows[0].annee}` : "";
-  const detail = trimestreTableHtml(meta.trimestres || [], [
-    { label: "Appartement", valeurs: prix.apptT, ventes: prix.nApptT },
-    { label: "Maison", valeurs: prix.maisonT, ventes: prix.nMaisonT },
+  const detail = trimestreDetailHtml(meta.trimestres || [], [
+    { label: "Appartement", valeurs: prix.apptT, ventes: prix.nApptT, couleur: "#4ea1ff" },
+    { label: "Maison", valeurs: prix.maisonT, ventes: prix.nMaisonT, couleur: "#f0883e" },
   ], meta.minVentes);
   return `<div class="prix">
     <div class="prix-h">Prix au m²${an}${commune ? ` · ${esc(commune)}` : ""}</div>
