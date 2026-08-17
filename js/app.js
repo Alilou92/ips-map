@@ -2,7 +2,7 @@
 import Store from "./store.js?v=31";
 import { initMap, drawAddressCircle, markerFor, fitToMarkers } from "./map.js?v=10";
 import { geocode, reverseGeocode } from "./geocode.js?v=6";
-import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur, renderPrix, clearPrix } from "./ui.js?v=16";
+import { renderList, setCount, showErr, showInfo, clearErr, clearList, renderSecteur, clearSecteur, renderPrix, clearPrix } from "./ui.js?v=17";
 import { collegeDeSecteur } from "./secteur.js?v=2";
 import { makeStationsController } from "./stations.js?v=25";
 import { DEPT_BY_NAME, DEPT_NAME_BY_CODE, AMBIGUOUS_DEPT_NAMES } from "./departements.js?v=1";

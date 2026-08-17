@@ -10,7 +10,7 @@
 //     dans les grandes villes — Paris, Lyon et Marseille sont au moins
 //     découpés par arrondissement, puisque ce sont des communes INSEE.
 
-import { trimestreDetailHtml } from "./trimestre.js?v=2";
+import { trimestreDetailHtml } from "./trimestre.js?v=3";
 
 const esc = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")

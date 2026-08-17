@@ -11,7 +11,7 @@
 // Collèges publics uniquement — ni les écoles ni les lycées n'ont de carte
 // scolaire nationale.
 
-import { trimestreDetailHtml } from "./trimestre.js?v=2";
+import { trimestreDetailHtml } from "./trimestre.js?v=3";
 
 const esc = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")

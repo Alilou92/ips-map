@@ -1,7 +1,7 @@
 // js/ui.js
 import { examSummary } from "./exams.js?v=5";
-import { prixHtml } from "./prix.js?v=6";
-import { secteurIndicsHtml } from "./secteurIndics.js?v=4";
+import { prixHtml } from "./prix.js?v=7";
+import { secteurIndicsHtml } from "./secteurIndics.js?v=5";
 
 export function showErr(msg){
   const el=document.getElementById('err'); if(!el) return;
