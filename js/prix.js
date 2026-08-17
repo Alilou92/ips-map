@@ -10,6 +10,8 @@
 //     dans les grandes villes — Paris, Lyon et Marseille sont au moins
 //     découpés par arrondissement, puisque ce sont des communes INSEE.
 
+import { trimestreTableHtml } from "./trimestre.js?v=1";
+
 const esc = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -102,11 +104,16 @@ export function prixHtml(prix, meta = {}, commune = "", dep = null, precisionReq
   }).join("");
 
   const an = rows[0].annee ? ` ${rows[0].annee}` : "";
+  const detail = trimestreTableHtml(meta.trimestres || [], [
+    { label: "Appartement", valeurs: prix.apptT, ventes: prix.nApptT },
+    { label: "Maison", valeurs: prix.maisonT, ventes: prix.nMaisonT },
+  ], meta.minVentes);
   return `<div class="prix">
     <div class="prix-h">Prix au m²${an}${commune ? ` · ${esc(commune)}` : ""}</div>
     ${lignes}
     <div class="prix-note">Médiane des ventes de la commune (DVF). Un chiffre communal
       masque les écarts entre quartiers.</div>
+    ${detail}
   </div>`;
 }
 

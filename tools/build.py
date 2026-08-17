@@ -537,8 +537,24 @@ def _secteur_dune_vente(sect, insee, voie, numero):
         hits = {t[3] for t in troncons}
     return sect["uai"][next(iter(hits))] if len(hits) == 1 else None
 
+def _trimestre(date_mutation):
+    """'2024-07-15' -> 3 (juillet tombe dans le 3e trimestre). None si illisible."""
+    m = re.match(r"\d{4}-(\d{2})", str(date_mutation or ""))
+    if not m:
+        return None
+    return (int(m.group(1)) - 1) // 3 + 1
+
 def _ventes_departement(dep, annee):
-    """Ventes exploitables d'un département pour une année, déjà nettoyées."""
+    """Ventes exploitables d'un département pour une année, déjà nettoyées.
+
+    Chaque vente porte son trimestre (1 à 4) : il sert au détail trimestriel,
+    affiché à la demande sous la médiane annuelle — celle-ci reste la valeur
+    de référence, le mois par mois étant trop bruité pour l'immobilier (une
+    médiane peut varier de 30 % d'un mois à l'autre sur un pur effet de
+    composition, sans que le marché ait bougé). Le trimestre est le meilleur
+    compromis : assez de ventes pour rester lisible, assez fin pour montrer
+    une tendance dans l'année plutôt qu'un seul point.
+    """
     url = f"{DVF_BASE}/{annee}/departements/{dep}.csv.gz"
     raw = gzip.decompress(_fetch_bytes(url)).decode("utf-8", "replace")
 
@@ -565,19 +581,29 @@ def _ventes_departement(dep, annee):
         if not (500 <= p <= 25000):
             continue
         out.append((r.get("code_commune") or "", r["type_local"], p,
-                    norm_voie_dvf(r.get("adresse_nom_voie")), r.get("adresse_numero")))
+                    norm_voie_dvf(r.get("adresse_nom_voie")), r.get("adresse_numero"),
+                    _trimestre(r.get("date_mutation"))))
     return out
 
 def build_prix():
     """data/prix.min.json — prix au m² par commune ET par secteur de collège.
 
     Sortie :
-      meta.annees      millésimes retenus, du plus ancien au plus récent
-      communes[INSEE]  { appt: [...], nAppt: [...], maison: [...], nMaison: [...] }
-      secteurs[UAI]    { rues, prix: [...], ventes: [...] }
+      meta.annees       millésimes retenus, du plus ancien au plus récent
+      meta.trimestres   les mêmes années découpées en trimestres ("2024-T3"…)
+      communes[INSEE]   { appt, nAppt, maison, nMaison,        <- annuel, 1 pt/an
+                           apptT, nApptT, maisonT, nMaisonT }  <- trimestriel, 4 pts/an
+      secteurs[UAI]      { rues, prix, ventes,                 <- annuel
+                           prixT, ventesT }                     <- trimestriel
 
-    Les tableaux sont alignés sur meta.annees, avec null là où le nombre de
-    ventes ne permet pas une médiane crédible.
+    Les séries annuelles restent la valeur de référence affichée par défaut :
+    mesuré sur une vente réelle (Paris 1er, ~20 ventes/mois — un cas déjà
+    favorable), la médiane MENSUELLE variait de 30 % d'un mois à l'autre sans
+    que le marché ait bougé, un pur effet de composition des biens vendus. Le
+    trimestre est le meilleur compromis pour un détail à la demande : assez
+    de ventes pour amortir cet effet, assez fin pour montrer une tendance
+    dans l'année. Comme pour l'annuel, un trimestre sous PRIX_MIN_VENTES
+    reste à null plutôt que d'afficher une médiane qui ne veut rien dire.
 
     Le secteur de carte scolaire est un bien meilleur périmètre que la commune :
     c'est celui qui décide de l'affectation, et il est plus fin — Bordeaux
@@ -588,6 +614,7 @@ def build_prix():
     if not annees:
         print("  (DVF) aucun millésime, prix ignorés")
         return
+    trimestres = [f"{a}-T{t}" for a in annees for t in (1, 2, 3, 4)]
     print(f"Télécharge DVF {annees[0]}-{annees[-1]}…")
 
     # liste des départements tirée de l'annuaire, pas de data/dep/ : ces
@@ -598,6 +625,13 @@ def build_prix():
 
     communes, secteurs, echecs = {}, {}, []
     rattachees = manquees = 0
+    # accumulateurs bruts pour les secteurs, finalisés après la boucle sur
+    # les départements : un UAI proche d'une frontière (ex. 0011071J, entre
+    # l'Ain et le Jura) figure dans PLUSIEURS cartes scolaires départementales,
+    # donc alimenté à plusieurs reprises — écrire directement dans secteurs[]
+    # à chaque passage écraserait les ventes des départements précédents au
+    # lieu de les cumuler. Sans objet pour les communes, une seule par dép.
+    secteur_vals, secteur_vals_t = {}, {}
 
     for dep in deps:
         # carte scolaire du département, si elle existe (17, 22, 2A, 2B absents)
@@ -621,12 +655,14 @@ def build_prix():
                 continue
 
             par_commune, par_secteur = {}, {}
-            for insee, type_local, prix, voie, numero in ventes:
+            par_commune_t, par_secteur_t = {}, {}
+            for insee, type_local, prix, voie, numero, trimestre in ventes:
                 if not insee:
                     continue
                 cle = "appt" if type_local == "Appartement" else "maison"
                 par_commune.setdefault(insee, {}).setdefault(cle, []).append(prix)
 
+                uai = None
                 if sect:
                     uai = _secteur_dune_vente(sect, insee, voie, numero)
                     if uai:
@@ -634,6 +670,12 @@ def build_prix():
                         rattachees += 1
                     else:
                         manquees += 1
+
+                if trimestre is not None:
+                    it = i * 4 + (trimestre - 1)
+                    par_commune_t.setdefault(insee, {}).setdefault(cle, {}).setdefault(it, []).append(prix)
+                    if uai:
+                        par_secteur_t.setdefault(uai, {}).setdefault(it, []).append(prix)
 
             for insee, types in par_commune.items():
                 row = communes.setdefault(insee, {})
@@ -645,19 +687,58 @@ def build_prix():
                         row[cle][i] = round(_mediane(vals))
 
             for uai, vals in par_secteur.items():
-                row = secteurs.setdefault(uai, {
-                    "rues": rues_par_uai.get(uai, 0),
-                    "prix": [None] * len(annees),
-                    "ventes": [0] * len(annees),
-                })
-                row["ventes"][i] = len(vals)
-                if len(vals) >= PRIX_MIN_VENTES:
-                    row["prix"][i] = round(_mediane(vals))
+                if uai not in secteurs:
+                    secteurs[uai] = {
+                        "rues": rues_par_uai.get(uai, 0),
+                        "prix": [None] * len(annees),
+                        "ventes": [0] * len(annees),
+                    }
+                secteur_vals.setdefault(uai, {}).setdefault(i, []).extend(vals)
+
+            for insee, types in par_commune_t.items():
+                row = communes.setdefault(insee, {})
+                for cle, parIt in types.items():
+                    cleT = cle + "T"
+                    nCleT = "n" + cle.capitalize() + "T"
+                    row.setdefault(cleT, [None] * len(trimestres))
+                    row.setdefault(nCleT, [0] * len(trimestres))
+                    for it, vals in parIt.items():
+                        row[nCleT][it] = len(vals)
+                        if len(vals) >= PRIX_MIN_VENTES:
+                            row[cleT][it] = round(_mediane(vals))
+
+            for uai, parIt in par_secteur_t.items():
+                if uai not in secteurs:
+                    secteurs[uai] = {
+                        "rues": rues_par_uai.get(uai, 0),
+                        "prix": [None] * len(annees),
+                        "ventes": [0] * len(annees),
+                    }
+                for it, vals in parIt.items():
+                    secteur_vals_t.setdefault(uai, {}).setdefault(it, []).extend(vals)
 
         time.sleep(0.05)
 
+    # finalisation : une seule médiane par (uai, période), calculée sur les
+    # ventes cumulées de tous les départements qui référencent cet UAI
+    for uai, parAnnee in secteur_vals.items():
+        row = secteurs[uai]
+        for i, vals in parAnnee.items():
+            row["ventes"][i] = len(vals)
+            if len(vals) >= PRIX_MIN_VENTES:
+                row["prix"][i] = round(_mediane(vals))
+
+    for uai, parIt in secteur_vals_t.items():
+        row = secteurs[uai]
+        row.setdefault("prixT", [None] * len(trimestres))
+        row.setdefault("ventesT", [0] * len(trimestres))
+        for it, vals in parIt.items():
+            row["ventesT"][it] = len(vals)
+            if len(vals) >= PRIX_MIN_VENTES:
+                row["prixT"][it] = round(_mediane(vals))
+
     out = {
-        "meta": {"annees": annees, "absents": sorted(DVF_ABSENTS),
+        "meta": {"annees": annees, "trimestres": trimestres, "absents": sorted(DVF_ABSENTS),
                  "minVentes": PRIX_MIN_VENTES, "deps": len(deps) - len(echecs)},
         "communes": communes,
         "secteurs": secteurs,

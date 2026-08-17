@@ -2,7 +2,7 @@
 import { strip, distanceMeters } from "./util.js?v=3";
 
 /** Cache-bust pour les JSON statiques */
-const DATA_VERSION = "27";
+const DATA_VERSION = "28";
 
 /* ---------- utils ---------- */
 const toNum = (x) => (x === null || x === undefined || x === "" ? null : Number(x));

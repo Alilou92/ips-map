@@ -310,3 +310,14 @@ body{
 .ind-sub{ opacity:.65; font-size:11px; margin-top:2px; }
 .ind-note{ opacity:.55; font-size:11px; margin-top:8px; }
 .spark{ vertical-align:middle; margin-left:8px; }
+
+/* ——— Détail trimestriel (repli imbriqué dans un bloc déjà repliable) ——— */
+.trim-detail{ margin-top:6px; font-size:12px; }
+.trim-detail > summary{ cursor:pointer; opacity:.75; }
+.trim-detail > summary:hover{ opacity:1; }
+.trim-table{ width:100%; border-collapse:collapse; margin-top:4px; }
+.trim-table th, .trim-table td{ padding:2px 6px 2px 0; text-align:left; }
+.trim-table thead th{ opacity:.6; font-weight:400; font-size:11px; }
+.trim-t{ opacity:.8; white-space:nowrap; }
+.trim-n{ opacity:.55; font-size:10px; }
+.trim-note{ opacity:.5; font-size:10px; margin-top:4px; }

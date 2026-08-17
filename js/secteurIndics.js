@@ -11,6 +11,8 @@
 // Collèges publics uniquement — ni les écoles ni les lycées n'ont de carte
 // scolaire nationale.
 
+import { trimestreTableHtml } from "./trimestre.js?v=1";
+
 const esc = (s) => String(s ?? "")
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -93,6 +95,9 @@ export function secteurIndicsHtml({ ipsSerie, secteurPrix, meta = {} }) {
         <div class="ind-sub">${secteurPrix.rues ? `${secteurPrix.rues} tronçons de rue rattachés • ` : ""}${
           ventes ? `${ventes} ventes sur ${(meta.annees || []).length} ans` : ""}</div>
       </div>`);
+      lignes.push(trimestreTableHtml(meta.trimestres || [], [
+        { label: "Secteur", valeurs: secteurPrix.prixT, ventes: secteurPrix.ventesT },
+      ], meta.minVentes));
     }
   }
 
